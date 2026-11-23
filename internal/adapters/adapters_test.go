@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,9 +48,29 @@ func TestOnlyClaudeHasHooks(t *testing.T) {
 	}
 }
 
-func TestBlockIncludesMemoryProtocol(t *testing.T) {
-	b, err := ODDBlock()
-	if err != nil || len(b.Content) < 500 {
-		t.Fatalf("%v", err)
+func TestBlockMatchesAgentCapabilities(t *testing.T) {
+	enf, err := ODDBlock(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adv, err := ODDBlock(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(enf.Content, "BLOQUEAN") || !strings.Contains(enf.Content, "odd-resume") {
+		t.Fatal("el bloque con hooks debe describir bloqueos y skills")
+	}
+	for _, banned := range []string{"BLOQUEAN", "hook", "Skills disponibles", "odd-resume", "v-ia mode"} {
+		if strings.Contains(adv.Content, banned) {
+			t.Errorf("el bloque sin hooks no debe mencionar %q (no lo tiene)", banned)
+		}
+	}
+	for _, must := range []string{"NADA te bloquea", "v-ia guard check", "v-ia task check", "v-ia review check", "gana el código"} {
+		if !strings.Contains(adv.Content, must) {
+			t.Errorf("el bloque sin hooks debe incluir %q", must)
+		}
+	}
+	if enf.Content == adv.Content {
+		t.Fatal("deben ser distintos")
 	}
 }

@@ -81,10 +81,15 @@ func (a Adapter) Detected() bool {
 	return err == nil
 }
 
-// ODDBlock devuelve el bloque canónico (odd + classify + protocolo de memoria, embebidos).
-func ODDBlock() (core.Block, error) {
+// ODDBlock devuelve el bloque canónico. enforced indica si el agente tiene hooks de V-IA:
+// el texto no debe prometer bloqueos ni skills a un agente que no los tiene.
+func ODDBlock(enforced bool) (core.Block, error) {
+	tail := "odd/advisory.md"
+	if enforced {
+		tail = "odd/enforced.md"
+	}
 	var content string
-	for _, f := range []string{"odd/odd.md", "odd/classify.md", "memory/memory-protocol.md"} {
+	for _, f := range []string{"odd/odd.md", tail, "odd/classify.md", "memory/memory-protocol.md"} {
 		b, err := corefs.FS.ReadFile(f)
 		if err != nil {
 			return core.Block{}, err
@@ -96,15 +101,15 @@ func ODDBlock() (core.Block, error) {
 
 // Targets construye los core.Target de los agentes dados (los desconocidos se ignoran).
 func Targets(home string, names []string) ([]core.Target, error) {
-	b, err := ODDBlock()
-	if err != nil {
-		return nil, err
-	}
 	var ts []core.Target
 	for _, n := range names {
 		a, ok := Find(n)
 		if !ok {
 			continue
+		}
+		b, err := ODDBlock(a.Hooks)
+		if err != nil {
+			return nil, err
 		}
 		for _, p := range a.Targets(home) {
 			ts = append(ts, core.Target{Path: p, Block: b})

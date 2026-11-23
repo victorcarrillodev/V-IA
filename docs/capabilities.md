@@ -20,8 +20,8 @@ Rutas tomadas de la configuración oficial de Gentle-AI (repo `internal/agents`,
 
 | Agente | Archivo | Cumplimiento |
 |---|---|---|
-| claude-code | `~/.claude/CLAUDE.md` + hooks + skills + subagente revisor | **bloqueo (hooks)** |
-| opencode | `$XDG_CONFIG_HOME/opencode/AGENTS.md` | solo instrucciones |
+| claude-code | `~/.claude/CLAUDE.md` + hooks + skills + subagente revisor | **bloqueo (hooks)**; verificado E1, E2, E3, E7 (`scripts/e2e-claude.sh`) |
+| opencode | `$XDG_CONFIG_HOME/opencode/AGENTS.md` | solo instrucciones (**verificado con OpenCode 1.19.5**: lee el archivo y cumple E1–E4; `scripts/e2e-opencode.sh`) |
 | codex | `$CODEX_HOME/AGENTS.md` (`~/.codex`) | solo instrucciones |
 | gemini-cli | `~/.gemini/GEMINI.md` | solo instrucciones |
 | kilocode | `$XDG_CONFIG_HOME/kilo/AGENTS.md` | solo instrucciones |
@@ -30,6 +30,7 @@ Rutas tomadas de la configuración oficial de Gentle-AI (repo `internal/agents`,
 | generic | `AGENTS.md` del proyecto (`--agent generic`) | solo instrucciones |
 
 ## Pendiente de verificar
+- Rutas de codex, gemini-cli, kilocode, qwen-code y windsurf: tomadas del código de Gentle-AI, no verificadas ejecutando cada agente (no están instalados aquí).
 - Cursor, Copilot y el resto de agentes de Gentle-AI: no soportados todavía.
 - Hooks de bloqueo en agentes distintos de Claude Code.
 - Engram: no está instalado en este equipo; la integración (`install --engram`, hook SessionStart) está probada con un `engram` simulado.
