@@ -129,3 +129,16 @@ func TestNoHooksFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestNoHooksButPermissionsDoesNotInstallHooks(t *testing.T) {
+	o := opts(t, "claude-code")
+	o.Hooks = false
+	apply(t, mustPlan(t, Install, o), o)
+	b, err := os.ReadFile(adapters.SettingsPath(o.Home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "v-ia hook") || !strings.Contains(string(b), "permissions") {
+		t.Fatalf("--no-hooks debe sembrar solo la deny-list:\n%s", b)
+	}
+}

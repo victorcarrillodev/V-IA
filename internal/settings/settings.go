@@ -115,16 +115,19 @@ func seedDeny(m map[string]any) {
 	m["permissions"] = perms
 }
 
-// Merge añade (o actualiza) los hooks de V-IA y, con perms, la deny-list. Es idempotente.
-func Merge(existing, exe string, perms bool) (string, error) {
+// Merge añade (o actualiza) los hooks de V-IA (si hooksOn) y, con perms, la deny-list. Es idempotente.
+func Merge(existing, exe string, hooksOn, perms bool) (string, error) {
 	m, err := parse(existing)
 	if err != nil {
 		return "", err
 	}
-	strip(m)
 	if perms {
 		seedDeny(m)
 	}
+	if !hooksOn {
+		return render(m) // sin hooks: solo permisos; no se tocan los hooks existentes
+	}
+	strip(m)
 	hooks, _ := m["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}

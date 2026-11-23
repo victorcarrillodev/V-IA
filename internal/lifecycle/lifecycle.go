@@ -85,7 +85,7 @@ func settingsAction(o Options) (core.Action, error) {
 	if err != nil {
 		return core.Action{}, err
 	}
-	nw, err := settings.Merge(old, o.Exe, o.Permissions)
+	nw, err := settings.Merge(old, o.Exe, o.Hooks, o.Permissions)
 	if err != nil {
 		return core.Action{}, err
 	}
