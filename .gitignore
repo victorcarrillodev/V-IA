@@ -1,0 +1,6 @@
+/v-ia
+/bin/
+.v-ia/
+.serena/
+graphify-out/
+*.test
