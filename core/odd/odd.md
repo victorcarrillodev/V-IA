@@ -11,5 +11,6 @@ Sigue estos pasos en orden. Cada regla es sí/no.
 7. **Cerrar.** Marca `[x]` solo con una fila en *Evidencia* (comando + resultado observado). Informa qué quedó verificado, qué falló y qué sigue. Al retomar, contrasta documento + memoria + código actual (gana el código).
 8. **Entrega.** Commit, push, PR o release SOLO si el usuario lo pide de forma explícita.
 
+Skills disponibles: `odd-resume`, `odd-verify`, `odd-delegate`, `rdd-review`, `work-unit-commits` (índice en `.atl/skill-registry.md` si existe).
 Los hooks de V-IA bloquean: editar en modo lectura, editar en seguimiento sin ficha, commit/push/PR sin petición explícita y cerrar con `[x]` sin evidencia. Si un hook te bloquea, corrige la causa; no lo evites.
-Comandos de control: `v-ia task check`, `v-ia guard check`, `v-ia review check` (ejecuta build/tests y emite recibo), `v-ia mode`.
+Comandos de control: `v-ia task check`, `v-ia guard check`, `v-ia review check` (ejecuta build/tests, evalúa riesgo y emite recibo), `v-ia mode`.

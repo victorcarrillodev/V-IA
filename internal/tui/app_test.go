@@ -39,6 +39,8 @@ func send(t *testing.T, m Model, k string) Model {
 
 func newModel(t *testing.T) (Model, string) {
 	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg")) // nunca escribir en la config real
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 	m := New(home)
 	for i := range m.selected { // independiente de qué agentes haya en el PC de test
 		m.selected[i] = true
@@ -51,7 +53,7 @@ func TestFlujoCompleto(t *testing.T) {
 	for _, k := range []string{"enter", "enter", "enter"} { // welcome → agentes → componentes → revisión
 		m = send(t, m, k)
 	}
-	if m.Screen() != int(scReview) || len(m.Plan().Changes()) != 1 {
+	if m.Screen() != int(scReview) || len(m.Plan().Changes()) < 2 {
 		t.Fatalf("pantalla=%d cambios=%d", m.Screen(), len(m.Plan().Changes()))
 	}
 	target := filepath.Join(home, ".claude", "CLAUDE.md")

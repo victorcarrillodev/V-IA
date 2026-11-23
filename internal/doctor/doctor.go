@@ -29,10 +29,19 @@ type Result struct {
 func Run(home string) []Result {
 	var rs []Result
 	for _, a := range adapters.All {
+		// Solo se informa de los agentes presentes (claude-code, el principal, siempre).
+		if !a.Detected() && a.Name != "claude-code" {
+			continue
+		}
 		if a.Detected() {
 			rs = append(rs, Result{Pass, a.Name + ": detectado"})
 		} else {
 			rs = append(rs, Result{Warn, a.Name + ": no encontrado en PATH"})
+		}
+		if a.Hooks {
+			rs = append(rs, Result{Pass, a.Name + ": ODD se hace cumplir por bloqueo (hooks)"})
+		} else {
+			rs = append(rs, Result{Warn, a.Name + ": solo instrucciones; sin hooks ODD es una recomendación"})
 		}
 		ts, _ := adapters.Targets(home, []string{a.Name})
 		p, _ := core.BuildPlan(ts, false)

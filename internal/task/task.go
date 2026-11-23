@@ -13,6 +13,9 @@ import (
 
 var (
 	idRe      = regexp.MustCompile(`\b(T-\d+)\b`)
+	specRe    = regexp.MustCompile(`\bS\d+\b`)
+	logRe     = regexp.MustCompile(`^\s*[-*]\s*L1\s*:\s*(.*)$`)
+	anyTaskRe = regexp.MustCompile(`^\s*- \[[ xX]\]\s*(.*)$`)
 	checkedRe = regexp.MustCompile(`^\s*- \[[xX]\]\s*(.*)$`)
 )
 
@@ -33,7 +36,8 @@ func Slug(s string) string {
 }
 
 // New crea odd/tasks/<slug>.md desde la plantilla. No sobrescribe.
-func New(root, feature, tmpl string, now time.Time) (string, error) {
+// request, si no está vacío, se escribe literal en S1 y en L1.
+func New(root, feature, tmpl string, now time.Time, request ...string) (string, error) {
 	slug := Slug(feature)
 	if slug == "" {
 		return "", fmt.Errorf("nombre de feature vacío")
@@ -44,6 +48,12 @@ func New(root, feature, tmpl string, now time.Time) (string, error) {
 	}
 	d := now.Format("2006-01-02")
 	r := strings.NewReplacer("<nombre>", feature, "<fecha>", d)
+	if len(request) > 0 && strings.TrimSpace(request[0]) != "" {
+		line := strings.Join(strings.Fields(request[0]), " ")
+		tmpl = strings.NewReplacer(
+			"<pega aquí la petición literal del usuario: textos, mensajes de error y ejemplos exactos>", line,
+			"<pega aquí la petición original, literal>", line).Replace(tmpl)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
@@ -96,11 +106,54 @@ func Check(content string) []Problem {
 			}
 		}
 	}
+	specs := map[string]bool{}
+	if f, t := section(lines, "Specs"); f < 0 {
+		ps = append(ps, Problem{1, "falta la sección '## Specs' con S1: la petición literal del usuario"})
+	} else {
+		for _, l := range lines[f:t] {
+			if strings.Contains(l, "<pega") {
+				ps = append(ps, Problem{f, "Specs sin completar: pega la petición literal del usuario"})
+				break
+			}
+		}
+		for _, l := range lines[f:t] {
+			if id := specRe.FindString(l); id != "" && strings.HasPrefix(strings.TrimSpace(l), "-") {
+				specs[id] = true
+			}
+		}
+		if len(specs) == 0 {
+			ps = append(ps, Problem{f, "Specs sin ningún S# (ej. '- S1: ...')"})
+		}
+	}
+	if f, t := section(lines, "Log"); f < 0 {
+		ps = append(ps, Problem{1, "falta la sección '## Log' con L1: la petición original"})
+	} else {
+		ok := false
+		for _, l := range lines[f:t] {
+			if m := logRe.FindStringSubmatch(l); m != nil && strings.TrimSpace(m[1]) != "" && !strings.Contains(m[1], "<pega") {
+				ok = true
+			}
+		}
+		if !ok {
+			ps = append(ps, Problem{f, "Log sin L1: pega la petición original literal"})
+		}
+	}
 	f, t := section(lines, "Tareas")
 	if f < 0 {
 		return append(ps, Problem{1, "falta la sección '## Tareas'"})
 	}
 	for i := f; i < t; i++ {
+		if a := anyTaskRe.FindStringSubmatch(lines[i]); a != nil && len(specs) > 0 {
+			refs := specRe.FindAllString(a[1], -1)
+			if len(refs) == 0 {
+				ps = append(ps, Problem{i + 1, "tarea sin spec enlazada (S#)"})
+			}
+			for _, r := range refs {
+				if !specs[r] {
+					ps = append(ps, Problem{i + 1, "la tarea cita " + r + ", que no existe en Specs"})
+				}
+			}
+		}
 		m := checkedRe.FindStringSubmatch(lines[i])
 		if m == nil {
 			continue
@@ -133,4 +186,47 @@ func CheckAll(root string) (map[string][]Problem, int, error) {
 		}
 	}
 	return out, len(files), nil
+}
+
+// Summary cuenta tareas hechas y totales de un documento.
+func Summary(content string) (done, total int) {
+	lines := strings.Split(content, "\n")
+	f, t := section(lines, "Tareas")
+	if f < 0 {
+		return 0, 0
+	}
+	for _, l := range lines[f:t] {
+		if m := anyTaskRe.FindStringSubmatch(l); m != nil {
+			total++
+			if checkedRe.MatchString(l) {
+				done++
+			}
+		}
+	}
+	return
+}
+
+// Status describe cada ficha: feature, estado y avance.
+func Status(root string) ([]string, error) {
+	files, err := filepath.Glob(filepath.Join(root, "odd", "tasks", "*.md"))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		st := "?"
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(l, "status:"); ok {
+				st = strings.TrimSpace(v)
+				break
+			}
+		}
+		d, n := Summary(string(b))
+		out = append(out, fmt.Sprintf("%s  [%s]  %d/%d tareas", filepath.Base(f), st, d, n))
+	}
+	return out, nil
 }

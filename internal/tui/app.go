@@ -13,6 +13,7 @@ import (
 	"v-ia/internal/adapters"
 	"v-ia/internal/core"
 	"v-ia/internal/doctor"
+	"v-ia/internal/lifecycle"
 )
 
 type screen int
@@ -93,10 +94,8 @@ func (m Model) selectedNames() []string {
 
 func (m *Model) buildPlan() {
 	m.planErr, m.diff, m.scroll = nil, nil, 0
-	ts, err := adapters.Targets(m.home, m.selectedNames())
-	if err == nil {
-		m.plan, err = core.BuildPlan(ts, m.force)
-	}
+	var err error
+	m.plan, err = lifecycle.Install(lifecycle.Options{Home: m.home, Agents: m.selectedNames(), Force: m.force, Hooks: true, Permissions: true})
 	if err != nil {
 		m.planErr = err
 		return

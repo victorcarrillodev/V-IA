@@ -26,10 +26,11 @@ const (
 	Update                  // bloque nuestro desactualizado
 	Unchanged               // ya está igual
 	Conflict                // el bloque gestionado fue editado a mano
+	Delete                  // se elimina un archivo gestionado
 )
 
 func (s Status) String() string {
-	return [...]string{"create", "add", "update", "unchanged", "conflict"}[s]
+	return [...]string{"create", "add", "update", "unchanged", "conflict", "delete"}[s]
 }
 
 func sum(s string) string {
@@ -104,4 +105,44 @@ func Remove(existing, id string) (string, bool) {
 		start--
 	}
 	return existing[:start] + existing[loc[1]:], true
+}
+
+var fileMarkRe = regexp.MustCompile(`(?s)^(.*)<!-- v-ia:managed-file sha256=([0-9a-f]+) -->\n$`)
+
+// RenderFile devuelve un archivo completo gestionado: contenido + marca con su hash.
+// El contenido va primero para que un frontmatter (SKILL.md) siga al inicio del archivo.
+func RenderFile(content string) string {
+	c := normalize(content)
+	return c + "<!-- v-ia:managed-file sha256=" + sum(c) + " -->\n"
+}
+
+// managedFile indica si el archivo es nuestro y sigue intacto.
+func managedFile(existing string) (owned, intact bool) {
+	m := fileMarkRe.FindStringSubmatch(existing)
+	if m == nil {
+		return false, false
+	}
+	return true, sum(m[1]) == m[2]
+}
+
+// UpsertFile gestiona un archivo completo. Un archivo sin marca, o con la marca pero
+// editado a mano, es del usuario: Conflict salvo force.
+func UpsertFile(existing string, exists bool, content string, force bool) (string, Status) {
+	rendered := RenderFile(content)
+	if !exists {
+		return rendered, Create
+	}
+	if existing == rendered {
+		return existing, Unchanged
+	}
+	if _, intact := managedFile(existing); !intact && !force {
+		return existing, Conflict
+	}
+	return rendered, Update
+}
+
+// RemovableFile indica si un archivo gestionado puede borrarse sin perder ediciones.
+func RemovableFile(existing string) bool {
+	_, intact := managedFile(existing)
+	return intact
 }

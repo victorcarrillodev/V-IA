@@ -1,7 +1,7 @@
-// Package corefs embebe las instrucciones ODD (fuente de verdad) en el binario.
+// Package corefs embebe las instrucciones ODD, skills y subagentes (fuente de verdad) en el binario.
 package corefs
 
 import "embed"
 
-//go:embed odd
+//go:embed odd skills agents memory
 var FS embed.FS

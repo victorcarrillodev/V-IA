@@ -7,33 +7,33 @@ import (
 	"time"
 )
 
-const base = "---\nfeature: x\n---\n## Tareas\n%s\n## Evidencia\n| Tarea | Comando | Resultado | Fecha |\n|---|---|---|---|\n%s\n"
+const base = "---\nfeature: x\n---\n## Specs\n- S1: pide X literal\n\n## Tareas\n%s\n## Evidencia\n| Tarea | Comando | Resultado | Fecha |\n|---|---|---|---|\n%s\n## Log\n- L1: pide X literal\n"
 
 func doc(tasks, ev string) string {
 	return strings.Replace(strings.Replace(base, "%s", tasks, 1), "%s", ev, 1)
 }
 
 func TestXSinEvidenciaFalla(t *testing.T) {
-	ps := Check(doc("- [x] T-1 hacer", ""))
+	ps := Check(doc("- [x] T-1 (S1) hacer", ""))
 	if len(ps) != 1 || !strings.Contains(ps[0].Msg, "T-1") {
 		t.Fatalf("%v", ps)
 	}
 }
 
 func TestXConEvidenciaPasa(t *testing.T) {
-	if ps := Check(doc("- [x] T-1 hacer", "| T-1 | go test | ok | hoy |")); len(ps) != 0 {
+	if ps := Check(doc("- [x] T-1 (S1) hacer", "| T-1 | go test | ok | hoy |")); len(ps) != 0 {
 		t.Fatalf("%v", ps)
 	}
 }
 
 func TestEvidenciaVaciaNoCuenta(t *testing.T) {
-	if ps := Check(doc("- [x] T-1 hacer", "| T-1 |  |  | hoy |")); len(ps) != 1 {
+	if ps := Check(doc("- [x] T-1 (S1) hacer", "| T-1 |  |  | hoy |")); len(ps) != 1 {
 		t.Fatalf("%v", ps)
 	}
 }
 
 func TestPendienteNoRequiereEvidencia(t *testing.T) {
-	if ps := Check(doc("- [ ] T-1 hacer", "")); len(ps) != 0 {
+	if ps := Check(doc("- [ ] T-1 (S1) hacer", "")); len(ps) != 0 {
 		t.Fatalf("%v", ps)
 	}
 }
@@ -50,5 +50,46 @@ func TestNewNoSobrescribe(t *testing.T) {
 	}
 	if _, err := New(d, "Mi Feature Ñ", "", time.Now()); err == nil {
 		t.Fatal("debía negarse a sobrescribir")
+	}
+}
+
+func TestSpecsLogYEnlaces(t *testing.T) {
+	sin := "---\nfeature: x\n---\n## Tareas\n- [ ] T-1 hacer\n"
+	if ps := Check(sin); len(ps) < 2 {
+		t.Fatalf("debe exigir Specs y Log: %v", ps)
+	}
+	if ps := Check(doc("- [ ] T-1 hacer", "")); len(ps) != 1 || !strings.Contains(ps[0].Msg, "spec") {
+		t.Fatalf("tarea sin S#: %v", ps)
+	}
+	if ps := Check(doc("- [ ] T-1 (S9) hacer", "")); len(ps) != 1 || !strings.Contains(ps[0].Msg, "S9") {
+		t.Fatalf("S# inexistente: %v", ps)
+	}
+}
+
+func TestPlantillaSinCompletarFallaYConPeticionPasa(t *testing.T) {
+	tmpl, _ := os.ReadFile("../../core/odd/templates/task.md")
+	d := t.TempDir()
+	p, _ := New(d, "feat uno", string(tmpl), time.Now())
+	b, _ := os.ReadFile(p)
+	if len(Check(string(b))) == 0 {
+		t.Fatal("la plantilla sin completar no debe validar")
+	}
+	p2, _ := New(d, "feat dos", string(tmpl), time.Now(), "Crea el comando  foo\ny que imprima \"hola\"")
+	b2, _ := os.ReadFile(p2)
+	if ps := Check(string(b2)); len(ps) != 0 {
+		t.Fatalf("con petición literal debe validar: %v\n%s", ps, b2)
+	}
+	if !strings.Contains(string(b2), `S1: Crea el comando foo y que imprima "hola"`) {
+		t.Fatalf("S1 no es literal:\n%s", b2)
+	}
+}
+
+func TestStatus(t *testing.T) {
+	d := t.TempDir()
+	os.MkdirAll(d+"/odd/tasks", 0o755)
+	os.WriteFile(d+"/odd/tasks/a.md", []byte(doc("- [x] T-1 (S1) a\n- [ ] T-2 (S1) b", "| T-1 | c | r | h |")), 0o644)
+	out, _ := Status(d)
+	if len(out) != 1 || !strings.Contains(out[0], "1/2") {
+		t.Fatalf("%v", out)
 	}
 }

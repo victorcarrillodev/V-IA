@@ -9,13 +9,14 @@ import (
 	"strings"
 )
 
-var managedRe = regexp.MustCompile(`v-ia"? hook (pre|prompt|stop)$`)
+var managedRe = regexp.MustCompile(`v-ia"? hook (pre|prompt|stop|session)$`)
 
 type spec struct {
 	event, matcher, arg string
 }
 
 var specs = []spec{
+	{"SessionStart", "", "session"},
 	{"PreToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash", "pre"},
 	{"UserPromptSubmit", "", "prompt"},
 	{"Stop", "", "stop"},
@@ -89,13 +90,41 @@ func render(m map[string]any) (string, error) {
 	return string(b) + "\n", err
 }
 
-// Merge añade (o actualiza) los hooks de V-IA. Es idempotente.
-func Merge(existing, exe string) (string, error) {
+// DenyList son las rutas sensibles que se niegan a la lectura por defecto.
+var DenyList = []string{
+	"Read(~/.ssh/**)", "Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)",
+	"Read(**/*.p12)", "Read(**/*.pfx)", "Read(~/.aws/credentials)", "Read(~/.config/gh/hosts.yml)",
+	"Read(**/secrets/**)", "Read(~/.credentials/**)",
+}
+
+// seedDeny crea permissions.deny solo si la clave no existe: lo que el usuario ya
+// decidió (incluida una lista vacía) no se toca.
+func seedDeny(m map[string]any) {
+	perms, _ := m["permissions"].(map[string]any)
+	if perms == nil {
+		perms = map[string]any{}
+	}
+	if _, ok := perms["deny"]; ok {
+		return
+	}
+	l := make([]any, len(DenyList))
+	for i, d := range DenyList {
+		l[i] = d
+	}
+	perms["deny"] = l
+	m["permissions"] = perms
+}
+
+// Merge añade (o actualiza) los hooks de V-IA y, con perms, la deny-list. Es idempotente.
+func Merge(existing, exe string, perms bool) (string, error) {
 	m, err := parse(existing)
 	if err != nil {
 		return "", err
 	}
 	strip(m)
+	if perms {
+		seedDeny(m)
+	}
 	hooks, _ := m["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}

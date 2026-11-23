@@ -45,7 +45,7 @@ func BuildPlan(targets []Target, force bool) (Plan, error) {
 func (p Plan) Changes() []Action {
 	var out []Action
 	for _, a := range p.Actions {
-		if a.Status == Create || a.Status == Add || a.Status == Update {
+		if a.Status == Create || a.Status == Add || a.Status == Update || a.Status == Delete {
 			out = append(out, a)
 		}
 	}

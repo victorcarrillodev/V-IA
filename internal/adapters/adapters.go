@@ -2,28 +2,52 @@
 package adapters
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	corefs "v-ia/core"
 	"v-ia/internal/core"
-	"v-ia/internal/settings"
 )
 
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // Adapter describe un agente soportado.
 type Adapter struct {
 	Name    string
 	Binary  string                     // ejecutable a buscar en PATH
+	Hooks   bool                       // ¿V-IA puede hacer cumplir ODD por bloqueo (hooks)?
 	Targets func(home string) []string // archivos de instrucciones globales
 }
 
+func xdgConfig(home string) string {
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return x
+	}
+	return filepath.Join(home, ".config")
+}
+
+func codexHome(home string) string {
+	if c := os.Getenv("CODEX_HOME"); c != "" {
+		return c
+	}
+	return filepath.Join(home, ".codex")
+}
+
+func one(parts ...string) []string { return []string{filepath.Join(parts...)} }
+
+// All son los agentes con instrucciones globales conocidas (rutas verificadas contra la
+// configuración oficial de cada agente). Solo Claude Code expone hooks de bloqueo;
+// el resto recibe las instrucciones y `doctor` lo declara como "solo recomendación".
 var All = []Adapter{
-	{Name: "claude-code", Binary: "claude", Targets: func(h string) []string {
-		return []string{filepath.Join(h, ".claude", "CLAUDE.md")}
+	{Name: "claude-code", Binary: "claude", Hooks: true, Targets: func(h string) []string { return one(h, ".claude", "CLAUDE.md") }},
+	{Name: "opencode", Binary: "opencode", Targets: func(h string) []string { return one(xdgConfig(h), "opencode", "AGENTS.md") }},
+	{Name: "codex", Binary: "codex", Targets: func(h string) []string { return one(codexHome(h), "AGENTS.md") }},
+	{Name: "gemini-cli", Binary: "gemini", Targets: func(h string) []string { return one(h, ".gemini", "GEMINI.md") }},
+	{Name: "kilocode", Binary: "kilo", Targets: func(h string) []string { return one(xdgConfig(h), "kilo", "AGENTS.md") }},
+	{Name: "qwen-code", Binary: "qwen", Targets: func(h string) []string { return one(h, ".qwen", "QWEN.md") }},
+	{Name: "windsurf", Binary: "windsurf", Targets: func(h string) []string {
+		return one(h, ".codeium", "windsurf", "memories", "global_rules.md")
 	}},
 }
 
@@ -34,7 +58,7 @@ var Generic = Adapter{Name: "generic", Targets: func(string) []string {
 	if err != nil {
 		return nil
 	}
-	return []string{filepath.Join(wd, "AGENTS.md")}
+	return one(wd, "AGENTS.md")
 }}
 
 func Find(name string) (Adapter, bool) {
@@ -50,24 +74,27 @@ func Find(name string) (Adapter, bool) {
 }
 
 func (a Adapter) Detected() bool {
+	if a.Binary == "" {
+		return false
+	}
 	_, err := exec.LookPath(a.Binary)
 	return err == nil
 }
 
-// ODDBlock devuelve el bloque canónico (odd.md + classify.md embebidos).
+// ODDBlock devuelve el bloque canónico (odd + classify + protocolo de memoria, embebidos).
 func ODDBlock() (core.Block, error) {
-	odd, err := corefs.FS.ReadFile("odd/odd.md")
-	if err != nil {
-		return core.Block{}, err
+	var content string
+	for _, f := range []string{"odd/odd.md", "odd/classify.md", "memory/memory-protocol.md"} {
+		b, err := corefs.FS.ReadFile(f)
+		if err != nil {
+			return core.Block{}, err
+		}
+		content += string(b) + "\n"
 	}
-	cl, err := corefs.FS.ReadFile("odd/classify.md")
-	if err != nil {
-		return core.Block{}, err
-	}
-	return core.Block{ID: "odd", Version: Version, Content: string(odd) + "\n" + string(cl)}, nil
+	return core.Block{ID: "odd", Version: Version, Content: content}, nil
 }
 
-// Plan construye los Target de los agentes dados.
+// Targets construye los core.Target de los agentes dados (los desconocidos se ignoran).
 func Targets(home string, names []string) ([]core.Target, error) {
 	b, err := ODDBlock()
 	if err != nil {
@@ -96,33 +123,3 @@ func Home() (string, error) {
 
 // SettingsPath es el settings.json global de Claude Code.
 func SettingsPath(home string) string { return filepath.Join(home, ".claude", "settings.json") }
-
-// exeForHooks devuelve el comando con el que los hooks invocarán a v-ia.
-func exeForHooks() string {
-	if exe, err := os.Executable(); err == nil && filepath.Base(exe) == "v-ia" {
-		return exe
-	}
-	return "v-ia"
-}
-
-// SettingsAction planifica la instalación de los hooks de V-IA en settings.json.
-func SettingsAction(home string) (core.Action, error) {
-	p := SettingsPath(home)
-	data, err := os.ReadFile(p)
-	exists := err == nil
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return core.Action{}, err
-	}
-	nw, err := settings.Merge(string(data), exeForHooks())
-	if err != nil {
-		return core.Action{}, err
-	}
-	st := core.Update
-	switch {
-	case !exists:
-		st = core.Create
-	case nw == string(data):
-		st = core.Unchanged
-	}
-	return core.Action{Path: p, Status: st, Existed: exists, Old: string(data), New: nw}, nil
-}

@@ -22,11 +22,22 @@ type Check struct {
 	Output string `json:"output_tail"`
 }
 
+// Ack es el veredicto de un revisor independiente, ligado al candidato exacto.
+type Ack struct {
+	CandidateID string `json:"candidate_id"`
+	Verdict     string `json:"verdict"` // approve | changes
+	Reviewer    string `json:"reviewer"`
+	Note        string `json:"note,omitempty"`
+	At          string `json:"at"`
+}
+
 type Receipt struct {
-	CandidateID string  `json:"candidate_id"`
-	Created     string  `json:"created"`
-	Result      string  `json:"result"` // pass | fail
-	Checks      []Check `json:"checks"`
+	CandidateID string     `json:"candidate_id"`
+	Created     string     `json:"created"`
+	Result      string     `json:"result"` // pass | fail
+	Checks      []Check    `json:"checks"`
+	Risk        Assessment `json:"risk"`
+	Review      *Ack       `json:"review,omitempty"`
 }
 
 func receiptPath(root string) string { return filepath.Join(root, ".v-ia", "receipt.json") }
@@ -90,22 +101,53 @@ func Run(root string, cmds []string, timeout time.Duration) (Receipt, error) {
 		return r, err
 	}
 	r.CandidateID = guard.ID(snap)
+	r.Risk = Assess(root, "")
 	r.Created = time.Now().UTC().Format(time.RFC3339)
-	b, _ := json.MarshalIndent(r, "", "  ")
-	if err := os.MkdirAll(filepath.Dir(receiptPath(root)), 0o755); err != nil {
-		return r, err
-	}
-	return r, os.WriteFile(receiptPath(root), b, 0o644)
+	return r, save(root, r)
 }
 
-// Verify confirma que existe un recibo pass y que el árbol actual es el mismo candidato.
-func Verify(root string) error {
+func save(root string, r Receipt) error {
+	b, _ := json.MarshalIndent(r, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(receiptPath(root)), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(receiptPath(root), b, 0o644)
+}
+
+func load(root string) (Receipt, error) {
+	var r Receipt
 	raw, err := os.ReadFile(receiptPath(root))
 	if err != nil {
-		return errors.New("no hay recibo: ejecuta 'v-ia review check'")
+		return r, errors.New("no hay recibo: ejecuta 'v-ia review check'")
 	}
-	var r Receipt
-	if err := json.Unmarshal(raw, &r); err != nil {
+	return r, json.Unmarshal(raw, &r)
+}
+
+// RecordAck guarda el veredicto del revisor si el árbol sigue siendo el candidato del recibo.
+func RecordAck(root, verdict, reviewer, note string) error {
+	if verdict != "approve" && verdict != "changes" {
+		return errors.New("veredicto inválido: approve | changes")
+	}
+	r, err := load(root)
+	if err != nil {
+		return err
+	}
+	snap, err := guard.Take(root)
+	if err != nil {
+		return err
+	}
+	if guard.ID(snap) != r.CandidateID {
+		return errors.New("el árbol cambió desde 'review check': vuelve a ejecutarlo antes de revisar")
+	}
+	r.Review = &Ack{CandidateID: r.CandidateID, Verdict: verdict, Reviewer: reviewer, Note: note, At: time.Now().UTC().Format(time.RFC3339)}
+	return save(root, r)
+}
+
+// Verify confirma que hay un recibo pass para el árbol actual. Con requireAck
+// (riesgo alto y RDD activo) exige además el visto bueno de un revisor sobre ese mismo candidato.
+func Verify(root string, requireAck bool) error {
+	r, err := load(root)
+	if err != nil {
 		return err
 	}
 	if r.Result != "pass" {
@@ -117,6 +159,14 @@ func Verify(root string) error {
 	}
 	if guard.ID(snap) != r.CandidateID {
 		return errors.New("el recibo es de otra versión: el árbol cambió desde la revisión")
+	}
+	if requireAck && r.Risk.ReviewDue {
+		if r.Review == nil || r.Review.CandidateID != r.CandidateID {
+			return errors.New("riesgo ALTO: falta la revisión independiente (subagente v-ia-reviewer → v-ia review ack)")
+		}
+		if r.Review.Verdict != "approve" {
+			return errors.New("el revisor pidió cambios: " + r.Review.Note)
+		}
 	}
 	return nil
 }

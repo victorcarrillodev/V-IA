@@ -139,3 +139,29 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("remove: %q", out)
 	}
 }
+
+func TestUpsertFileRules(t *testing.T) {
+	c := "---\nname: x\n---\ncuerpo\n"
+	out, st := UpsertFile("", false, c, false)
+	if st != Create || !strings.HasPrefix(out, "---\nname: x") {
+		t.Fatalf("el frontmatter debe quedar al inicio: %v %q", st, out)
+	}
+	if _, st := UpsertFile(out, true, c, false); st != Unchanged {
+		t.Fatalf("idéntico => Unchanged, fue %v", st)
+	}
+	if o2, st := UpsertFile(out, true, c+"más\n", false); st != Update || o2 == out {
+		t.Fatalf("contenido nuevo => Update: %v", st)
+	}
+	if _, st := UpsertFile("archivo del usuario\n", true, c, false); st != Conflict {
+		t.Fatalf("sin marca es del usuario => Conflict, fue %v", st)
+	}
+	if _, st := UpsertFile(strings.Replace(out, "cuerpo", "editado", 1), true, c, false); st != Conflict {
+		t.Fatalf("editado a mano => Conflict, fue %v", st)
+	}
+	if _, st := UpsertFile("archivo del usuario\n", true, c, true); st != Update {
+		t.Fatalf("force => Update, fue %v", st)
+	}
+	if !RemovableFile(out) || RemovableFile("otro\n") {
+		t.Fatal("solo se puede borrar lo nuestro e intacto")
+	}
+}

@@ -3,14 +3,21 @@
 package hook
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"v-ia/internal/adapters"
 	"v-ia/internal/guard"
+	"v-ia/internal/registry"
+	"v-ia/internal/review"
 	"v-ia/internal/task"
 )
 
@@ -65,11 +72,18 @@ func SaveState(root string, s State) error {
 }
 
 var (
-	noEditRe   = regexp.MustCompile(`(?i)sin (modificar|editar|tocar|cambiar)|no (modifiques|edites|toques|cambies)|solo lectura|read[- ]only`)
-	readRe     = regexp.MustCompile(`(?i)\b(expl[ií]ca\w*|analiza\w*|prop[oó]n\w*|qu[eé] hace|c[oó]mo funciona)\b`)
-	editRe     = regexp.MustCompile(`(?i)\b(corrige|arregla|implementa|crea|a[ñn]ade|agrega|cambia|elimina|borra|escribe|refactoriza|actualiza|modifica|edita|haz|hazlo|instala|fix|add|implement)\w*\b`)
-	deliverRe  = regexp.MustCompile(`(?i)\b(commit|push|pull request|release|publica|sube)\b|\bpr\b`)
-	noDeliver  = regexp.MustCompile(`(?i)(sin|no)\s+(hag\w+\s+|hacer\s+)?(commit|push|pr|release)`)
+	noEditRe  = regexp.MustCompile(`(?i)sin (modificar|editar|tocar|cambiar)|no (modifiques|edites|toques|cambies)|solo lectura|read[- ]only`)
+	readRe    = regexp.MustCompile(`(?i)\b(expl[ií]ca\w*|analiza\w*|prop[oó]n\w*|qu[eé] hace|c[oó]mo funciona)\b`)
+	editRe    = regexp.MustCompile(`(?i)\b(corrige|arregla|implementa|crea|a[ñn]ade|agrega|cambia|elimina|borra|escribe|refactoriza|actualiza|modifica|edita|haz|hazlo|instala|fix|add|implement)\w*\b`)
+	deliverRe = regexp.MustCompile(`(?i)\b(commit|push|pull request|release|publica|sube)\b|\bpr\b`)
+	noDeliver = regexp.MustCompile(`(?i)(sin|no)\s+(hag\w+\s+|hacer\s+)?(commit|push|pr|release)`)
+	dangerRe  = []*regexp.Regexp{
+		regexp.MustCompile(`\brm\s+(-\S*\s+)*-\S*[rR]\S*\s+(-\S+\s+)*(/|~|\$HOME|\.|\.\.|/\*|~/\*)(\s|$|;|&|\|)`),
+		regexp.MustCompile(`\bgit\s+(-\S+\s+)*push\b[^;&|\n]*(\s--force(\s|$)|\s-f(\s|$))`),
+		regexp.MustCompile(`\bgit\s+(-\S+\s+)*reset\s+--hard\b`),
+		regexp.MustCompile(`\bgit\s+(-\S+\s+)*clean\s+-\S*f`),
+		regexp.MustCompile(`\bchmod\s+-R\s+0?777\b`),
+	}
 	deliveryRe = regexp.MustCompile(`\bgit\s+(-[Cc]\s+\S+\s+|-\S+\s+)*(commit|push|tag)\b|\bgh\s+(pr\s+(create|merge)|release\s+create)\b`)
 )
 
@@ -133,8 +147,38 @@ func Handle(in Input) Result {
 		return preTool(root, st, in)
 	case "Stop":
 		return stop(root, st, in)
+	case "SessionStart":
+		return sessionStart(root)
 	}
 	return Result{}
+}
+
+// sessionStart recupera memoria (Engram, si existe), refresca el registro de skills
+// si el proyecto ya lo usa y recuerda el modo vigente.
+func sessionStart(root string) Result {
+	var parts []string
+	if exe, err := exec.LookPath("engram"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, exe, "context")
+		cmd.Dir = root
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if cmd.Run() == nil && out.Len() > 0 {
+			b := out.String()
+			if len(b) > 3000 {
+				b = b[:3000] + "\n…(recortado)"
+			}
+			parts = append(parts, "[V-IA] Memoria del proyecto (contrástala con el código; si discrepan gana el código):\n"+b)
+		}
+	}
+	if _, err := os.Stat(registry.Path(root)); err == nil {
+		if home, err := adapters.Home(); err == nil {
+			_, _ = registry.Refresh(home, root)
+		}
+		parts = append(parts, "[V-IA] Lee .atl/skill-registry.md: lista las skills disponibles.")
+	}
+	return Result{Msg: strings.Join(parts, "\n")}
 }
 
 func preTool(root string, st State, in Input) Result {
@@ -152,12 +196,40 @@ func preTool(root string, st State, in Input) Result {
 				return Result{Block: true, Msg: "V-IA/ODD: trabajo de seguimiento sin ficha. Crea odd/tasks/<feature>.md (v-ia task new <feature>) antes de editar."}
 			}
 		}
-	case in.Tool == "Bash" && deliveryRe.MatchString(in.ToolInput.Command):
-		if !st.DeliveryOK {
-			return Result{Block: true, Msg: "V-IA/ODD: commit/push/PR/release requieren que el usuario lo pida de forma explícita en su mensaje."}
+	case in.Tool == "Bash":
+		cmd := in.ToolInput.Command
+		for _, re := range dangerRe {
+			if re.MatchString(cmd) {
+				return Result{Block: true, Msg: "V-IA/seguridad: comando destructivo bloqueado (rm -rf de raíz/HOME/., push --force, reset --hard, clean -f, chmod -R 777). Pídele al usuario que lo ejecute él mismo."}
+			}
+		}
+		if deliveryRe.MatchString(cmd) {
+			if !st.DeliveryOK {
+				return Result{Block: true, Msg: "V-IA/ODD: commit/push/PR/release requieren que el usuario lo pida de forma explícita en su mensaje."}
+			}
+			if msg := receiptGate(root); msg != "" {
+				return Result{Block: true, Msg: msg}
+			}
 		}
 	}
 	return Result{}
+}
+
+// receiptGate exige recibo válido para entregar cuando RDD está activo y el proyecto
+// tiene comprobaciones definidas. Sin comprobaciones no hay nada que exigir.
+func receiptGate(root string) string {
+	home, err := adapters.Home()
+	if err != nil {
+		return ""
+	}
+	on, _ := review.Mode(root, home)
+	if !on || len(review.DetectCommands(root)) == 0 {
+		return ""
+	}
+	if err := review.Verify(root, true); err != nil {
+		return "V-IA/RDD: no se puede entregar sin recibo válido: " + err.Error() + ". Ejecuta `v-ia review check`."
+	}
+	return ""
 }
 
 func stop(root string, st State, in Input) Result {

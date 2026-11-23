@@ -82,6 +82,13 @@ func Apply(p Plan, backupRoot string, now time.Time) (string, error) {
 		return "", err
 	}
 	for i, a := range changes {
+		if a.Status == Delete {
+			if err := os.Remove(a.Path); err != nil {
+				rbErr := restoreManifest(dir, m)
+				return dir, errors.Join(fmt.Errorf("borrando %s: %w (rollback aplicado)", a.Path, err), rbErr)
+			}
+			continue
+		}
 		if err := writeHook(a.Path, []byte(a.New), os.FileMode(m.Entries[i].Mode)); err != nil {
 			rbErr := restoreManifest(dir, m)
 			return dir, errors.Join(fmt.Errorf("escribiendo %s: %w (rollback aplicado)", a.Path, err), rbErr)
