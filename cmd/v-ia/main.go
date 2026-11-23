@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"v-ia/internal/core"
 	"v-ia/internal/doctor"
 	"v-ia/internal/guard"
+	"v-ia/internal/hook"
+	"v-ia/internal/review"
 	"v-ia/internal/task"
 	"v-ia/internal/tui"
 )
@@ -42,6 +45,12 @@ func run(args []string) int {
 		return cmdTask(args[1:])
 	case "guard":
 		return cmdGuard(args[1:])
+	case "hook":
+		return cmdHook(args[1:])
+	case "mode":
+		return cmdMode(args[1:])
+	case "review":
+		return cmdReview(args[1:])
 	}
 	return fail("comando desconocido %q", args[0])
 }
@@ -53,7 +62,8 @@ func cmdInstall(args []string) int {
 	dry := fs.Bool("dry-run", false, "mostrar diff sin escribir")
 	yes := fs.Bool("yes", false, "aplicar sin confirmación")
 	force := fs.Bool("force", false, "sobrescribir bloque editado a mano (con backup)")
-	agent := fs.String("agent", "claude-code", "agentes separados por coma")
+	agent := fs.String("agent", "claude-code", "agentes separados por coma (claude-code, generic)")
+	noHooks := fs.Bool("no-hooks", false, "no instalar los hooks que hacen cumplir ODD")
 	if fs.Parse(args) != nil {
 		return 2
 	}
@@ -68,6 +78,13 @@ func cmdInstall(args []string) int {
 	p, err := core.BuildPlan(ts, *force)
 	if err != nil {
 		return fail("%v", err)
+	}
+	if !*noHooks && containsStr(strings.Split(*agent, ","), "claude-code") {
+		sa, err := adapters.SettingsAction(home)
+		if err != nil {
+			return fail("hooks: %v", err)
+		}
+		p.Actions = append(p.Actions, sa)
 	}
 	for _, a := range p.Actions {
 		if a.Status == core.Unchanged {
@@ -234,4 +251,93 @@ func cmdGuard(args []string) int {
 		return 1
 	}
 	return fail("uso: guard start | guard check")
+}
+
+func containsStr(l []string, s string) bool {
+	for _, x := range l {
+		if strings.TrimSpace(x) == s {
+			return true
+		}
+	}
+	return false
+}
+
+// cmdHook lo invocan los hooks de Claude Code. Falla abierto: ante un error propio
+// (JSON ilegible, etc.) no bloquea al agente; solo bloquea cuando una regla ODD se incumple.
+func cmdHook(args []string) int {
+	var in hook.Input
+	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
+		return 0
+	}
+	if in.Event == "" && len(args) > 0 {
+		in.Event = map[string]string{"pre": "PreToolUse", "prompt": "UserPromptSubmit", "stop": "Stop"}[args[0]]
+	}
+	r := hook.Handle(in)
+	if r.Block {
+		fmt.Fprintln(os.Stderr, r.Msg)
+		return 2
+	}
+	if r.Msg != "" {
+		fmt.Println(r.Msg)
+	}
+	return 0
+}
+
+func cmdMode(args []string) int {
+	root, _ := os.Getwd()
+	if len(args) == 0 || args[0] == "status" {
+		m := hook.LoadState(root).Mode
+		if m == "" {
+			m = "(sin clasificar)"
+		}
+		fmt.Println("modo:", m)
+		return 0
+	}
+	switch args[0] {
+	case hook.ModeRead, hook.ModeEdit, hook.ModeTracking:
+		st := hook.LoadState(root)
+		st.Mode = args[0]
+		if err := hook.SaveState(root, st); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println("✓ modo:", args[0])
+		return 0
+	}
+	return fail("uso: mode [status|read|edit|tracking]")
+}
+
+func cmdReview(args []string) int {
+	root, _ := os.Getwd()
+	if len(args) == 0 {
+		return fail("uso: review check | review verify")
+	}
+	switch args[0] {
+	case "check":
+		r, err := review.Run(root, review.DetectCommands(root), 10*time.Minute)
+		if err != nil {
+			return fail("%v", err)
+		}
+		for _, c := range r.Checks {
+			mark := "✓"
+			if c.Exit != 0 {
+				mark = "✗"
+			}
+			fmt.Printf("%s %s\n", mark, c.Cmd)
+			if c.Exit != 0 {
+				fmt.Println(c.Output)
+			}
+		}
+		fmt.Printf("recibo: %s (candidato %.12s)\n", r.Result, r.CandidateID)
+		if r.Result != "pass" {
+			return 1
+		}
+		return 0
+	case "verify":
+		if err := review.Verify(root); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println("✓ recibo válido para el árbol actual")
+		return 0
+	}
+	return fail("uso: review check | review verify")
 }

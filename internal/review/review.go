@@ -1,0 +1,122 @@
+// Package review ejecuta las comprobaciones del proyecto y emite un recibo
+// ligado al contenido exacto del árbol (candidate_id).
+package review
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"v-ia/internal/guard"
+)
+
+type Check struct {
+	Cmd    string `json:"cmd"`
+	Exit   int    `json:"exit"`
+	Output string `json:"output_tail"`
+}
+
+type Receipt struct {
+	CandidateID string  `json:"candidate_id"`
+	Created     string  `json:"created"`
+	Result      string  `json:"result"` // pass | fail
+	Checks      []Check `json:"checks"`
+}
+
+func receiptPath(root string) string { return filepath.Join(root, ".v-ia", "receipt.json") }
+
+// DetectCommands decide qué comprobar: .v-ia/checks.txt manda; si no, se infiere.
+func DetectCommands(root string) []string {
+	if f, err := os.Open(filepath.Join(root, ".v-ia", "checks.txt")); err == nil {
+		defer f.Close()
+		var out []string
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			if l := strings.TrimSpace(sc.Text()); l != "" && !strings.HasPrefix(l, "#") {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	var out []string
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+		out = append(out, "go build ./...", "go vet ./...", "go test ./...")
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "package.json")); err == nil && strings.Contains(string(b), `"test"`) {
+		out = append(out, "npm test --silent")
+	}
+	return out
+}
+
+func tail(s string, n int) string {
+	if len(s) > n {
+		return "…" + s[len(s)-n:]
+	}
+	return s
+}
+
+// Run ejecuta las comprobaciones y guarda el recibo. Sin comprobaciones => error:
+// un recibo vacío no demuestra nada.
+func Run(root string, cmds []string, timeout time.Duration) (Receipt, error) {
+	if len(cmds) == 0 {
+		return Receipt{}, errors.New("no hay comprobaciones: añade comandos en .v-ia/checks.txt (uno por línea)")
+	}
+	r := Receipt{Result: "pass"}
+	for _, c := range cmds {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		cmd := exec.CommandContext(ctx, "sh", "-c", c)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		cancel()
+		ck := Check{Cmd: c, Output: tail(string(out), 1500)}
+		if err != nil {
+			ck.Exit = 1
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				ck.Exit = ee.ExitCode()
+			}
+			r.Result = "fail"
+		}
+		r.Checks = append(r.Checks, ck)
+	}
+	snap, err := guard.Take(root)
+	if err != nil {
+		return r, err
+	}
+	r.CandidateID = guard.ID(snap)
+	r.Created = time.Now().UTC().Format(time.RFC3339)
+	b, _ := json.MarshalIndent(r, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(receiptPath(root)), 0o755); err != nil {
+		return r, err
+	}
+	return r, os.WriteFile(receiptPath(root), b, 0o644)
+}
+
+// Verify confirma que existe un recibo pass y que el árbol actual es el mismo candidato.
+func Verify(root string) error {
+	raw, err := os.ReadFile(receiptPath(root))
+	if err != nil {
+		return errors.New("no hay recibo: ejecuta 'v-ia review check'")
+	}
+	var r Receipt
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return err
+	}
+	if r.Result != "pass" {
+		return errors.New("el último recibo es fail")
+	}
+	snap, err := guard.Take(root)
+	if err != nil {
+		return err
+	}
+	if guard.ID(snap) != r.CandidateID {
+		return errors.New("el recibo es de otra versión: el árbol cambió desde la revisión")
+	}
+	return nil
+}

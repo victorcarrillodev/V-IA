@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // Block es un fragmento gestionado por V-IA dentro de un archivo.
@@ -45,7 +46,18 @@ func Render(b Block) string {
 		b.ID, b.Version, sum(c), c, b.ID)
 }
 
+var reCache sync.Map // id -> *regexp.Regexp
+
 func blockRe(id string) *regexp.Regexp {
+	if r, ok := reCache.Load(id); ok {
+		return r.(*regexp.Regexp)
+	}
+	r := compileBlockRe(id)
+	reCache.Store(id, r)
+	return r
+}
+
+func compileBlockRe(id string) *regexp.Regexp {
 	return regexp.MustCompile(`(?s)<!-- v-ia:managed begin id=` + regexp.QuoteMeta(id) +
 		` version=\S+ sha256=([0-9a-f]+) -->\n(.*?)<!-- v-ia:managed end id=` + regexp.QuoteMeta(id) + ` -->\n`)
 }

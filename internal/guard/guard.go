@@ -88,3 +88,17 @@ func Diff(root string) ([]string, error) {
 	sort.Strings(ch)
 	return ch, nil
 }
+
+// ID calcula un identificador determinista del contenido del árbol (candidato RDD).
+func ID(s Snapshot) string {
+	keys := make([]string, 0, len(s))
+	for k := range s {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k + "\x00" + s[k] + "\n"))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}

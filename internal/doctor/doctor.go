@@ -2,10 +2,12 @@
 package doctor
 
 import (
+	"os"
 	"os/exec"
 
 	"v-ia/internal/adapters"
 	"v-ia/internal/core"
+	"v-ia/internal/settings"
 )
 
 type Level int
@@ -44,6 +46,11 @@ func Run(home string) []Result {
 				rs = append(rs, Result{Warn, x.Path + ": bloque ODD pendiente (" + x.Status.String() + ") → v-ia install"})
 			}
 		}
+	}
+	if b, err := os.ReadFile(adapters.SettingsPath(home)); err == nil && settings.Installed(string(b)) {
+		rs = append(rs, Result{Pass, "hooks ODD (bloqueo de edición/entrega/cierre): instalados"})
+	} else {
+		rs = append(rs, Result{Warn, "hooks ODD no instalados: sin ellos ODD es solo una recomendación → v-ia install"})
 	}
 	if _, err := exec.LookPath("engram"); err == nil {
 		rs = append(rs, Result{Pass, "engram: instalado"})
