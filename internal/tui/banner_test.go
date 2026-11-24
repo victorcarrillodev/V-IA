@@ -17,39 +17,38 @@ func plain(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
 func TestBannerMapasConsistentes(t *testing.T) {
 	bannerOnce.Do(loadBanners)
-	want := map[bannerKind][2]int{bannerLarge: {76, 16}, bannerSmall: {46, 10}}
+	want := map[bannerKind][2]int{bannerLarge: {104, 24}, bannerSmall: {64, 16}}
 	for k, dim := range want {
 		rows := bannerCache[k]
 		if len(rows) != dim[1] {
 			t.Fatalf("banner %d: %d filas, quería %d", k, len(rows), dim[1])
 		}
+		on := 0
 		for i, r := range rows {
 			if len(r) != dim[0] {
 				t.Fatalf("banner %d fila %d: ancho %d, quería %d", k, i, len(r), dim[0])
 			}
-			if strings.Trim(r, ".WP") != "" {
-				t.Fatalf("banner %d fila %d: clases inválidas %q", k, i, r)
+			for _, p := range r {
+				if p.on {
+					on++
+				}
 			}
 		}
-		all := strings.Join(rows, "")
-		if !strings.Contains(all, "P") || !strings.Contains(all, "W") {
-			t.Fatalf("banner %d debe tener blanco y violeta", k)
+		if on < dim[0]*dim[1]/6 {
+			t.Fatalf("banner %d casi vacío: %d píxeles", k, on)
 		}
 	}
 }
 
-func TestBannerConColorUsaBlancoYVioleta(t *testing.T) {
+func TestBannerConColorUsaColorVerdadero(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
-	out := Banner(bannerLarge, 100)
-	if !strings.Contains(out, "109;40;255") { // #6D28FF
-		t.Fatal("falta el violeta del logo")
+	out := Banner(bannerLarge, 120)
+	if !strings.Contains(out, "38;2;") || !strings.Contains(out, "48;2;") {
+		t.Fatal("el banner debe usar color verdadero (fg y bg)")
 	}
-	if !strings.Contains(out, "255;255;255") {
-		t.Fatal("falta el blanco del logo")
-	}
-	if got := lipgloss.Height(out); got != 8 {
-		t.Fatalf("alto=%d, quería 8 filas", got)
+	if got := lipgloss.Height(out); got != 12 {
+		t.Fatalf("alto=%d, quería 12 filas", got)
 	}
 }
 
@@ -59,8 +58,8 @@ func TestBannerSinColorSoloFormas(t *testing.T) {
 	if ansiRe.MatchString(out) {
 		t.Fatal("sin color no debe haber secuencias ANSI")
 	}
-	if !strings.ContainsAny(out, "█▀▄▒") || !strings.Contains(out, "▒") {
-		t.Fatal("sin color el violeta debe distinguirse con sombreado")
+	if !strings.ContainsAny(out, "█▀▄▒▓░") {
+		t.Fatal("sin color el logo debe dibujarse con bloques")
 	}
 }
 
@@ -68,7 +67,7 @@ func TestPickBanner(t *testing.T) {
 	cases := []struct {
 		w, h int
 		k    bannerKind
-	}{{120, 50, bannerLarge}, {80, 30, bannerSmall}, {60, 24, bannerSmall}, {60, 20, bannerCompact}, {40, 50, bannerCompact}}
+	}{{120, 50, bannerLarge}, {80, 30, bannerSmall}, {70, 28, bannerSmall}, {60, 24, bannerCompact}, {40, 50, bannerCompact}}
 	for _, c := range cases {
 		if got := pickBanner(c.w, c.h); got != c.k {
 			t.Errorf("%dx%d: %d, quería %d", c.w, c.h, got, c.k)
