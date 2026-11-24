@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"v-ia/internal/adapters"
 	"v-ia/internal/core"
 	"v-ia/internal/doctor"
+	"v-ia/internal/extras"
 	"v-ia/internal/guard"
 	"v-ia/internal/hook"
 	"v-ia/internal/lifecycle"
@@ -77,7 +79,10 @@ func cmdPlan(kind string, args []string) int {
 	agent := fs.String("agent", "claude-code", "agentes separados por coma ("+agentNames()+", generic)")
 	noHooks := fs.Bool("no-hooks", false, "no instalar los hooks que hacen cumplir ODD")
 	noPerms := fs.Bool("no-permissions", false, "no sembrar la deny-list de archivos sensibles")
-	engram := fs.Bool("engram", false, "tras instalar, ejecutar 'engram setup claude-code'")
+	engram := fs.Bool("engram", false, "además, configurar Engram (memoria) con 'engram setup claude-code'")
+	ctx7 := fs.Bool("context7", false, "además, registrar Context7 (documentación por MCP)")
+	cgraph := fs.Bool("codegraph", false, "además, instalar y registrar CodeGraph (grafo de código por MCP)")
+	all := fs.Bool("all", false, "además, todos los opcionales: engram, context7 y codegraph")
 	if fs.Parse(args) != nil {
 		return 2
 	}
@@ -90,6 +95,32 @@ func cmdPlan(kind string, args []string) int {
 		if _, ok := adapters.Find(a); !ok {
 			return fail("agente no soportado: %s (disponibles: %s, generic)", a, agentNames())
 		}
+	}
+	var wanted []string
+	for id, on := range map[string]bool{extras.Engram: *engram, extras.Context7: *ctx7, extras.CodeGraph: *cgraph} {
+		if on || *all {
+			wanted = append(wanted, id)
+		}
+	}
+	if len(wanted) > 0 && kind != "install" {
+		return fail("--engram, --context7, --codegraph y --all solo se usan con 'install'")
+	}
+	var extraSteps []extras.Step
+	if len(wanted) > 0 {
+		sort.Slice(wanted, func(i, j int) bool { return idx(wanted[i]) < idx(wanted[j]) })
+		var notes []string
+		extraSteps, notes, err = extras.Plan(home, wanted)
+		if err != nil {
+			if !(extras.IsMissing(err) && *dry) {
+				return fail("%v", err)
+			}
+			fmt.Println("!", err, "(dry-run: se muestra lo que haría; sin ellos --yes se negaría a aplicar)")
+		}
+		defer func() {
+			for _, n := range notes {
+				fmt.Println("i", n)
+			}
+		}()
 	}
 	var p core.Plan
 	switch kind {
@@ -115,12 +146,21 @@ func cmdPlan(kind string, args []string) int {
 			fmt.Print(a.Diff())
 		}
 	}
+	for _, st := range extraSteps {
+		fmt.Printf("$ %s   # %s\n", st, st.Desc)
+	}
 	if *dry {
-		fmt.Println("dry-run: no se escribió nada")
+		fmt.Println("dry-run: no se escribió ni ejecutó nada")
 		return 0
 	}
-	if !*yes && len(p.Changes()) > 0 {
+	if !*yes && (len(p.Changes()) > 0 || len(extraSteps) > 0) {
 		return fail("falta --yes para aplicar (o usa --dry-run para previsualizar)")
+	}
+	// Los componentes externos van primero: si uno falla no se ha escrito nada de V-IA.
+	if len(extraSteps) > 0 {
+		if err := extras.Run(extraSteps, os.Stdout); err != nil {
+			return fail("%v (no se escribió ningún archivo de V-IA)", err)
+		}
 	}
 	dir, err := core.Apply(p, backupRoot(home), time.Now())
 	if err != nil {
@@ -131,24 +171,19 @@ func cmdPlan(kind string, args []string) int {
 	} else {
 		fmt.Println("✓ aplicado; backup en", dir)
 	}
-	if kind == "install" && *engram {
-		return setupEngram()
+	if len(extraSteps) > 0 {
+		fmt.Println("✓ componentes opcionales listos; reinicia tu agente para cargar los servidores MCP")
 	}
 	return 0
 }
 
-func setupEngram() int {
-	exe, err := exec.LookPath("engram")
-	if err != nil {
-		return fail("engram no está en PATH: instálalo (https://github.com/Gentleman-Programming/engram) y repite con --engram")
+func idx(id string) int {
+	for i, x := range extras.All {
+		if x == id {
+			return i
+		}
 	}
-	cmd := exec.Command(exe, "setup", "claude-code")
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fail("engram setup claude-code: %v", err)
-	}
-	fmt.Println("✓ engram configurado para claude-code")
-	return 0
+	return len(extras.All)
 }
 
 func agentNames() string {

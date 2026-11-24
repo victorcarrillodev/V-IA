@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/logo.png" alt="V-AI" width="520"></p>
+<p align="center"><img src="docs/assets/logo-neon.png" alt="V-AI" width="520"></p>
 
 # V-IA
 
@@ -43,7 +43,7 @@ V-IA hace tres cosas:
 | **Hooks (solo Claude Code)** | Bloquean ediciones en modo lectura, commits no pedidos, comandos destructivos y cierres sin evidencia. |
 | **Herramientas** | `task`, `guard`, `review`, `skill-registry`… que el agente (o tú) ejecutan para comprobar. |
 
-Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **5 skills**, un **subagente revisor**, integración con **Engram** (memoria entre sesiones) y una **deny-list** de archivos sensibles.
+Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **5 skills**, un **subagente revisor**, integración opcional con **Engram** (memoria), **Context7** (documentación por MCP) y **CodeGraph** (grafo de código) y una **deny-list** de archivos sensibles.
 
 ## 3. Qué agentes soporta
 
@@ -60,7 +60,18 @@ Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **5 skil
 
 ## 4. Instalación
 
-### 4.1 Requisitos
+### 4.0 Inicio rápido (dos comandos)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/victorcarrillodev/V-IA/main/install.sh | sh
+v-ia
+```
+
+El primero descarga el binario precompilado de la última release a `~/.local/bin` (sin Go, sin sudo; Linux/macOS, amd64/arm64). El segundo abre la terminal interactiva: elige **Instalar / configurar agentes**, revisa el diff y aplica. Si `~/.local/bin` no está en tu `PATH`, el instalador te lo indica.
+
+> **Estado:** el script y el flujo de publicación (`.goreleaser.yaml`, `.github/workflows/release.yml`) están en el repo, pero el comando solo funciona cuando el repositorio es público y existe una release publicada (se crea al subir una etiqueta `v*`, p. ej. `v0.3.0`). Hasta entonces, usa 4.1–4.2. El script verifica el `sha256` de la descarga contra `checksums.txt` (probado con una release simulada, no con una real).
+
+### 4.1 Requisitos (solo para compilar desde el código fuente)
 
 - Linux (no probado en macOS ni Windows).
 - **Go 1.27 o superior** (`go version`). Si no lo tienes y no puedes usar el gestor de paquetes, descarga el tarball oficial desde <https://go.dev/dl/> y descomprímelo en `~/.local/go-sdk`:
@@ -113,15 +124,24 @@ Qué escribe para Claude Code:
 
 > ⚠️ `settings.json` se reescribe con las claves en **orden alfabético** (el contenido se conserva, el formato cambia). Si tienes comentarios o un JSON no estricto, V-IA se niega a tocarlo.
 
-Opciones: `--no-hooks`, `--no-permissions`, `--force`, `--engram`. Detalle en el [manual](docs/manual.md#instalación-y-ciclo-de-vida).
+Opciones: `--no-hooks`, `--no-permissions`, `--force`, `--engram`, `--context7`, `--codegraph`, `--all`. Detalle en el [manual](docs/manual.md#instalación-y-ciclo-de-vida).
 
-### 4.4 Memoria con Engram (opcional)
+### 4.4 Componentes opcionales: Engram, Context7, CodeGraph
 
 ```bash
-v-ia install --yes --engram     # además ejecuta 'engram setup claude-code'
+v-ia install --dry-run --all    # ver qué comandos ejecutaría
+v-ia install --yes --all        # todo de una vez (o --engram / --context7 / --codegraph)
 ```
 
-Requiere `engram` en el `PATH`. Sin él, V-IA funciona igual pero el agente no recuerda entre sesiones.
+| Componente | Qué aporta | Requisitos |
+|---|---|---|
+| **Engram** | Memoria entre sesiones | `engram` |
+| **Context7** | Documentación actual de librerías por MCP | `claude`, `npx` (Node 18+) |
+| **CodeGraph** | Grafo de conocimiento del código por MCP | `claude`, `npm` |
+
+V-IA no los reimplementa: ejecuta sus comandos oficiales (con versión fijada), tras comprobar que no falta ningún requisito y antes de escribir nada propio. Con `--dry-run` ves los comandos aunque falte algún requisito. También son casillas en la terminal interactiva (paso *Componentes*), y `v-ia doctor` informa de su estado. CodeGraph escribe además instrucciones propias en `~/.claude/CLAUDE.md`. Sin ninguno de ellos V-IA funciona igual. Detalle y límites en el [manual](docs/manual.md#componentes-opcionales-engram-context7-codegraph).
+
+> No verificado contra las herramientas reales (sin Node en la máquina de desarrollo): lo probado es la lógica con ejecución simulada.
 
 ### 4.5 Deshacer
 
@@ -139,13 +159,13 @@ Ejecuta `v-ia` sin argumentos en un terminal y se abre un panel con el logo y un
 
 | Opción | Qué hace |
 |---|---|
-| Instalar / configurar agentes | Asistente: agentes → componentes (hooks, archivos sensibles) → revisión del diff → aplicar. |
+| Instalar / configurar agentes | Asistente: agentes → componentes (hooks, archivos sensibles, Engram, Context7, CodeGraph) → revisión del diff y comandos → aplicar. |
 | Estado del sistema | El diagnóstico de `doctor`, con refresco (`r`). |
 | Proyecto actual | Modo, interruptor RDD, recibo (vigente u obsoleto), riesgo y fichas del directorio donde lo abriste. |
 | Sincronizar / Desinstalar | Mismo flujo de revisión y aplicación, con backup. |
 | Restaurar último backup | Con confirmación previa. |
 
-Teclas: `↑↓` o `j/k` mover · `enter` elegir · `espacio` marcar · `esc` volver · `q` salir. El logo se adapta al tamaño del terminal (grande, pequeño o una línea) y, sin color (`NO_COLOR`), se dibuja solo con formas. Mínimo 60×18.
+Teclas: `↑↓` o `j/k` mover · `enter` elegir · `espacio` marcar · `esc` volver · `q` salir. El logo se adapta al tamaño del terminal (grande ≥112×40, mediano ≥70×28 o una línea) y todo el panel queda centrado en horizontal y vertical, con un ancho que escala con la ventana. En Ghostty y kitty el logo se dibuja como **imagen real** (protocolo gráfico de kitty); en el resto, con medios bloques en color verdadero y, sin color (`NO_COLOR`), con formas sombreadas. `V_IA_IMAGES=0` fuerza los bloques y `V_IA_IMAGES=1` fuerza la imagen. Mínimo 60×18.
 
 > Ábrelo dentro de la carpeta de tu proyecto si quieres ver el panel "Proyecto actual" de ese proyecto.
 
@@ -214,7 +234,8 @@ Lee esto antes de fiarte:
 - **`task check` valida la forma de la evidencia, no que el comando se ejecutara de verdad.**
 - Engram no está probado con el binario real; solo con uno simulado.
 - Codex, Gemini, Kilo, Qwen y Windsurf: rutas sin verificar con el agente real.
-- No hay releases ni binarios publicados; se compila desde el código fuente.
+- Aún no hay release publicada: hasta entonces se compila desde el código fuente (4.1–4.2). El instalador de una línea no se ha probado contra una release real.
+- El logo como imagen real solo está pensado para Ghostty y kitty; no funciona dentro de tmux (ahí se usan bloques).
 
 ## 9. Desarrollo y pruebas
 
@@ -225,6 +246,10 @@ V_IA_BIN=$PWD/v-ia ./scripts/e2e-opencode.sh         # E1–E4 con OpenCode real
 ```
 
 Los scripts end-to-end instalan los hooks **solo en un proyecto temporal** y no tocan tu configuración.
+
+## Inspiración y créditos
+
+V-IA nace de la idea y el trabajo de **[Gentle-AI](https://github.com/Gentleman-Programming/gentle-ai)** (Gentleman Programming): configurar los agentes de IA que ya usas para que sigan un método de trabajo, la memoria con [Engram](https://github.com/Gentleman-Programming/engram) y las rutas de configuración de varios agentes. V-IA es un proyecto independiente y no oficial, con su propio método (ODD + RDD) y su propio código; no está afiliado a Gentle-AI ni a sus autores. Gracias por el camino que abrieron.
 
 ## 10. Documentos del repositorio
 

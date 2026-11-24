@@ -1,6 +1,6 @@
 # Manual de V-IA
 
-Referencia completa. Para una visión rápida e instalación, ver el [README](../README.md).
+Referencia completa. Inspirado en el trabajo de [Gentle-AI](https://github.com/Gentleman-Programming/gentle-ai) (ver créditos en el README). Para una visión rápida e instalación (incluido el inicio rápido de dos comandos), ver el [README](../README.md).
 
 Contenido:
 
@@ -10,6 +10,7 @@ Contenido:
 4. [Modos: lectura, edición y seguimiento](#modos-lectura-edición-y-seguimiento)
 5. [La ficha ODD (`odd/tasks/`)](#la-ficha-odd-oddtasks)
 6. [RDD: recibo, riesgo y revisor](#rdd-recibo-riesgo-y-revisor)
+   - Componentes opcionales: [Engram, Context7, CodeGraph](#componentes-opcionales-engram-context7-codegraph)
 7. [Skills y registro](#skills-y-registro)
 8. [Memoria (Engram)](#memoria-engram)
 9. [Seguridad](#seguridad)
@@ -72,7 +73,7 @@ Los archivos completos (skills, subagente) llevan al final `<!-- v-ia:managed-fi
 ### `v-ia install`
 
 ```
-v-ia install [--dry-run] [--yes] [--force] [--agent a,b] [--no-hooks] [--no-permissions] [--engram]
+v-ia install [--dry-run] [--yes] [--force] [--agent a,b] [--no-hooks] [--no-permissions] [--engram] [--context7] [--codegraph] [--all]
 ```
 
 | Flag | Efecto |
@@ -83,7 +84,10 @@ v-ia install [--dry-run] [--yes] [--force] [--agent a,b] [--no-hooks] [--no-perm
 | `--agent` | Lista separada por comas. Por defecto `claude-code`. Válidos: `claude-code, opencode, codex, gemini-cli, kilocode, qwen-code, windsurf, generic`. |
 | `--no-hooks` | No instala hooks. Con `--no-permissions` tampoco toca `settings.json`. |
 | `--no-permissions` | No siembra la deny-list. |
-| `--engram` | Tras instalar, ejecuta `engram setup claude-code` (requiere `engram`). |
+| `--engram` | Además, ejecuta `engram setup claude-code` (requiere `engram`). |
+| `--context7` | Además, registra Context7 en Claude Code (ver [Componentes opcionales](#componentes-opcionales-engram-context7-codegraph)). |
+| `--codegraph` | Además, instala y registra CodeGraph. |
+| `--all` | Los tres opcionales a la vez: `engram`, `context7` y `codegraph`. |
 
 - Es **idempotente**: una segunda ejecución dice "nada que cambiar".
 - Antes de escribir crea un backup en `~/.v-ia/backups/<fecha>/` con un `manifest.json`.
@@ -104,7 +108,7 @@ En un terminal interactivo (Bubble Tea) abre un panel con el logo y un menú pri
 
 Teclas: `↑↓`/`j k` mover, `enter` elegir, `espacio` marcar, `f` forzar (conflictos, en la revisión), `esc` atrás, `q` salir, `ctrl+c` siempre. Mientras se aplica no se puede interrumpir (la escritura es atómica con rollback).
 
-**El logo** se genera desde `docs/assets/logo.png` con `python3 scripts/gen-banner.py` (necesita Pillow) y se embebe en el binario. Tiene tres tamaños según el terminal: grande (≥86×36), pequeño (≥54×24) y una línea. Sin color (`NO_COLOR` o sin TTY) el violeta se dibuja con sombreado `▒`. La vista nunca excede el tamaño del terminal (mínimo 60×18).
+**El logo** se genera desde `docs/assets/logo-neon.png` con `python3 scripts/gen-banner.py` (necesita Pillow) y se embebe en el binario: dos PNG de color verdadero para medios bloques (`banner_large`, `banner_small`) y uno grande (`banner_kitty`) para el protocolo gráfico de kitty. Tamaños: grande (≥112×40), mediano (≥70×28) y una línea. En Ghostty/kitty (y fuera de tmux) se muestra como imagen real mediante placeholders Unicode; `V_IA_IMAGES=0|1` desactiva o fuerza esto. Sin color (`NO_COLOR` o sin TTY) se dibuja con `█▓▒░`. El panel se centra en vertical y horizontal y su ancho escala con la ventana (≈3/4, entre 56 y 110 columnas). La vista nunca excede el tamaño del terminal (mínimo 60×18).
 
 Sin terminal interactivo (pipe, CI), `v-ia` falla y lista los comandos disponibles.
 
@@ -128,7 +132,7 @@ Si un archivo solo contenía nuestro bloque, se borra.
 ```
 v-ia upgrade --src <ruta-al-repo>      # o V_IA_SRC=<ruta>
 ```
-Hace `git pull --ff-only` en el repo, recompila (`go build`) y reemplaza el binario en uso. Después ejecuta `v-ia sync`. No hay releases publicados: se actualiza desde el código fuente.
+Hace `git pull --ff-only` en el repo, recompila (`go build`) y reemplaza el binario en uso. Después ejecuta `v-ia sync`. `upgrade` siempre actualiza desde el código fuente. Si instalaste con `install.sh`, puedes volver a ejecutarlo para bajar la última release.
 
 ### `v-ia restore`
 
@@ -334,10 +338,41 @@ Escanea `~/.claude/skills/` (global) y `<proyecto>/.claude/skills/` (proyecto); 
 V-IA **no implementa memoria propia**: delega en [Engram](https://github.com/Gentleman-Programming/engram).
 
 - El bloque ODD incluye el protocolo: recuperar por proyecto antes de preguntar; guardar tras decisiones, descubrimientos, bugs resueltos y convenciones (sin secretos); **la memoria nunca sustituye la verificación**.
-- `v-ia install --engram` ejecuta `engram setup claude-code`.
+- `v-ia install --engram` ejecuta `engram setup claude-code` (ver [Componentes opcionales](#componentes-opcionales-engram-context7-codegraph)).
 - El hook `SessionStart` inyecta `engram context` al abrir sesión.
 
 Sin `engram` en el PATH, todo lo demás funciona; solo no hay memoria entre sesiones.
+
+---
+
+## Componentes opcionales (Engram, Context7, CodeGraph)
+
+Herramientas de terceros que V-IA **no reimplementa**: ejecuta sus comandos oficiales de instalación. Son opcionales y solo se verifican con Claude Code.
+
+| Componente | Qué aporta | Comandos que ejecuta | Requisitos |
+|---|---|---|---|
+| **Engram** (`--engram`) | Memoria entre sesiones | `engram setup claude-code` | `engram` |
+| **Context7** (`--context7`) | Documentación actual de librerías por MCP | `claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp@4.7.3` | `claude`, `npx` (Node 18+) |
+| **CodeGraph** (`--codegraph`) | Grafo de conocimiento del código por MCP | `npm install -g @colbymchenry/codegraph@1.6.4` (si falta) y `codegraph install --yes --target=claude` | `claude`, `npm` |
+
+```bash
+v-ia install --dry-run --all     # muestra el diff y los comandos que ejecutaría
+v-ia install --yes --all         # aplica el diff y luego ejecuta los comandos
+v-ia install --yes --context7    # solo uno
+```
+
+- **Se comprueba todo antes de escribir:** si falta un requisito (`claude`, `npx`, `npm`…), `--yes` falla antes de tocar nada y dice cuáles faltan. Con `--dry-run` no falla: avisa de lo que falta y aun así muestra los comandos que ejecutaría.
+- **Versiones fijadas:** los paquetes se instalan con versión exacta (`@upstash/context7-mcp@4.7.3`, `@colbymchenry/codegraph@1.6.4`), no con `latest`. Se suben a propósito en `internal/extras/extras.go`.
+- **Orden:** primero se ejecutan los componentes externos y después se escriben los archivos de V-IA. Si un componente falla (p. ej. `npm install -g` sin permisos), no se escribe nada de V-IA y el comando es reintentable. Lo ya instalado por un paso anterior no se revierte solo (`claude mcp remove ...`).
+- **Idempotente:** si Context7 o CodeGraph ya figuran en `mcpServers` de `~/.claude.json`, se informa y no se repite. Engram no se puede detectar y su `setup` se ejecuta cada vez que lo pides.
+- **Sin diff de archivos:** estos pasos no pasan por el backup de V-IA (los hace la herramienta oficial). `--dry-run` los lista con `$ comando`. Para quitar un MCP: `claude mcp remove context7`.
+- **CodeGraph escribe en `~/.claude/CLAUDE.md`** (su instalador añade instrucciones propias) y requiere `codegraph init -i` en cada proyecto. Esas instrucciones no forman parte del bloque ODD gestionado, que no se toca. Si usas Serena o graphify para lo mismo, probablemente no necesites los dos.
+- Reinicia el agente después para que cargue los servidores MCP.
+- En la TUI aparecen como casillas en el paso **Componentes**; la revisión muestra los comandos y falla ahí mismo si falta un requisito.
+- `v-ia doctor` informa si Context7 y CodeGraph están instalados (detección leyendo `mcpServers` de `~/.claude.json`).
+- `sync` y `uninstall` **no** gestionan estos componentes: usan sus propias herramientas.
+
+Estado de verificación: cubierto por pruebas unitarias con ejecución simulada. **No se han ejecutado contra Context7 ni CodeGraph reales** (esta máquina no tenía Node), y los comandos salen de su documentación pública, no de una instalación probada aquí.
 
 ---
 
@@ -494,8 +529,11 @@ internal/guard/      huella del árbol (guard) y candidate_id
 internal/review/     checks, riesgo, recibo, ack, modo ON/OFF
 internal/registry/   índice de skills
 internal/doctor/     diagnóstico
+internal/extras/     Engram, Context7, CodeGraph: planifica y ejecuta sus comandos oficiales
 internal/tui/        terminal interactiva Bubble Tea (banner, menú, flujos, paneles)
 scripts/             e2e contra Claude Code y OpenCode reales; gen-banner.py (logo)
+install.sh           instalador de una línea (descarga la release)
+.goreleaser.yaml     binarios linux/darwin × amd64/arm64 (ver .github/workflows/release.yml)
 ```
 
 ## Cómo ampliarlo

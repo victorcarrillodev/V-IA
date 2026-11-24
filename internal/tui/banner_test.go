@@ -79,6 +79,7 @@ func TestPickBanner(t *testing.T) {
 
 // La vista nunca debe pasarse del terminal, en ninguna pantalla ni tamaño.
 func TestVistaCabeEnElTerminal(t *testing.T) {
+	t.Setenv("V_IA_IMAGES", "0")
 	sizes := [][2]int{{60, 18}, {80, 24}, {80, 30}, {100, 40}, {140, 50}}
 	for _, sz := range sizes {
 		m, _ := newModel(t)

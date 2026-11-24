@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"v-ia/internal/extras"
 )
 
 func key(s string) tea.KeyMsg {
@@ -276,5 +278,45 @@ func TestComponentesAlternanHooksYPermisos(t *testing.T) {
 		if strings.HasSuffix(a.Path, "settings.json") {
 			t.Fatal("sin hooks ni permisos no se toca settings.json")
 		}
+	}
+}
+
+func TestComponentesOpcionalesAparecenEnLaRevision(t *testing.T) {
+	old := extras.LookPath
+	extras.LookPath = func(b string) (string, error) { return "/fake/" + b, nil }
+	t.Cleanup(func() { extras.LookPath = old })
+	m, _ := newModel(t)
+	m = send(t, m, "enter")
+	m = send(t, m, "enter") // componentes
+	for i := 0; i < 3; i++ {
+		m = send(t, m, "j")
+	}
+	m = send(t, m, " ") // cursor 3 = Context7
+	if !m.optExtra[1] {
+		t.Fatal("Context7 debía quedar marcado")
+	}
+	m = send(t, m, "enter")
+	if m.planErr != nil {
+		t.Fatalf("planErr=%v", m.planErr)
+	}
+	if !strings.Contains(strings.Join(m.diff, "\n"), "$ claude mcp add --scope user context7") {
+		t.Fatalf("la revisión debe mostrar el comando de Context7:\n%v", m.diff)
+	}
+}
+
+func TestComponentesOpcionalesFaltanRequisitos(t *testing.T) {
+	old := extras.LookPath
+	extras.LookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	t.Cleanup(func() { extras.LookPath = old })
+	m, _ := newModel(t)
+	m = send(t, m, "enter")
+	m = send(t, m, "enter")
+	for i := 0; i < 4; i++ {
+		m = send(t, m, "j")
+	}
+	m = send(t, m, " ") // CodeGraph
+	m = send(t, m, "enter")
+	if m.planErr == nil || !strings.Contains(m.planErr.Error(), "codegraph") {
+		t.Fatalf("debía fallar por requisitos: %v", m.planErr)
 	}
 }

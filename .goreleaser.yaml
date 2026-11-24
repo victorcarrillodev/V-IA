@@ -1,0 +1,14 @@
+version: 2
+project_name: v-ia
+builds:
+  - id: v-ia
+    main: ./cmd/v-ia
+    binary: v-ia
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+archives:
+  - formats: [tar.gz]
+    name_template: "v-ia_{{ .Os }}_{{ .Arch }}"
+checksum:
+  name_template: checksums.txt

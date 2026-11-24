@@ -7,6 +7,7 @@ import (
 
 	"v-ia/internal/adapters"
 	"v-ia/internal/core"
+	"v-ia/internal/extras"
 	"v-ia/internal/settings"
 )
 
@@ -65,6 +66,13 @@ func Run(home string) []Result {
 		rs = append(rs, Result{Pass, "engram: instalado"})
 	} else {
 		rs = append(rs, Result{Warn, "engram: no encontrado (respaldo .v-ia/memory.md)"})
+	}
+	for _, it := range extras.Status(home) {
+		if it.OK {
+			rs = append(rs, Result{Pass, it.Msg})
+		} else {
+			rs = append(rs, Result{Warn, it.Msg})
+		}
 	}
 	return rs
 }

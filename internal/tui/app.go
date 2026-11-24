@@ -4,6 +4,7 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"v-ia/internal/adapters"
 	"v-ia/internal/core"
 	"v-ia/internal/doctor"
+	"v-ia/internal/extras"
 	"v-ia/internal/lifecycle"
 )
 
@@ -77,6 +79,9 @@ type Model struct {
 	selected  []bool
 
 	optHooks, optPerms bool
+	optExtra           [3]bool // engram, context7, codegraph (solo en install)
+	extraSteps         []extras.Step
+	extraNotes         []string
 	force              bool
 	plan               core.Plan
 	diff               []string
@@ -151,6 +156,21 @@ func (m *Model) buildPlan() {
 		m.planErr = err
 		return
 	}
+	m.extraSteps, m.extraNotes = nil, nil
+	if m.op == opInstall {
+		var ids []string
+		for i, on := range m.optExtra {
+			if on {
+				ids = append(ids, extras.All[i])
+			}
+		}
+		if len(ids) > 0 {
+			if m.extraSteps, m.extraNotes, err = extras.Plan(m.home, ids); err != nil {
+				m.planErr = err
+				return
+			}
+		}
+	}
 	for _, a := range m.plan.Actions {
 		switch a.Status {
 		case core.Unchanged:
@@ -161,10 +181,22 @@ func (m *Model) buildPlan() {
 			m.diff = append(m.diff, strings.Split(strings.TrimRight(a.Diff(), "\n"), "\n")...)
 		}
 	}
+	for _, st := range m.extraSteps {
+		m.diff = append(m.diff, "$ "+st.String())
+	}
+	for _, n := range m.extraNotes {
+		m.diff = append(m.diff, "i "+n)
+	}
 }
 
-func applyCmd(p core.Plan, root string) tea.Cmd {
+func applyCmd(p core.Plan, root string, steps []extras.Step) tea.Cmd {
 	return func() tea.Msg {
+		// primero los componentes externos: si fallan no se escribe nada de V-IA
+		if len(steps) > 0 {
+			if err := extras.Run(steps, io.Discard); err != nil {
+				return applyDoneMsg{err: fmt.Errorf("%w (no se escribió ningún archivo de V-IA)", err)}
+			}
+		}
 		d, err := core.Apply(p, root, time.Now())
 		return applyDoneMsg{dir: d, err: err}
 	}
@@ -221,12 +253,15 @@ func (m Model) onKey(k string) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			m.cursor = max(0, m.cursor-1)
 		case "down", "j":
-			m.cursor = min(1, m.cursor+1)
+			m.cursor = min(4, m.cursor+1)
 		case " ", "space":
-			if m.cursor == 0 {
+			switch m.cursor {
+			case 0:
 				m.optHooks = !m.optHooks
-			} else {
+			case 1:
 				m.optPerms = !m.optPerms
+			default:
+				m.optExtra[m.cursor-2] = !m.optExtra[m.cursor-2]
 			}
 		case "enter":
 			m.buildPlan()
@@ -334,7 +369,7 @@ func (m Model) onReview(k string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screen = scApply
-		return m, applyCmd(m.plan, backupRoot(m.home))
+		return m, applyCmd(m.plan, backupRoot(m.home), m.extraSteps)
 	}
 	return m, nil
 }
@@ -460,21 +495,34 @@ func (m Model) content() (body, footer string) {
 		}
 		return strings.TrimRight(b.String(), "\n"), help("↑↓", "mover", "espacio", "marcar", "enter", "siguiente", "esc", "inicio")
 	case scComponents:
-		row := func(i int, on bool, label, desc string) {
+		// una línea por componente; la descripción solo del que tiene el cursor
+		type opt struct {
+			on          bool
+			label, desc string
+		}
+		opts := []opt{
+			{m.optHooks, "Hooks de bloqueo (Claude Code)", "impiden editar en modo lectura, entregar sin pedirlo y cerrar sin evidencia"},
+			{m.optPerms, "Lista de archivos sensibles", "niega leer ~/.ssh, .env, *.pem, *.key y credenciales"},
+		}
+		for i, id := range extras.All {
+			inf, _ := extras.Describe(id)
+			opts = append(opts, opt{m.optExtra[i], inf.Title, inf.Desc})
+		}
+		b.WriteString(okStyle.Render("  [x]") + " ODD — instrucciones y clasificación " + dimStyle.Render("(obligatorio)") + "\n")
+		for i, o := range opts {
+			if i == 2 {
+				b.WriteString(dimStyle.Render("  Opcionales (ejecutan sus comandos oficiales):") + "\n")
+			}
 			cur, box := "  ", "[ ]"
 			if m.cursor == i {
 				cur = selStyle.Render("▸ ")
 			}
-			if on {
+			if o.on {
 				box = okStyle.Render("[x]")
 			}
-			b.WriteString(cur + box + " " + label + "\n      " + dimStyle.Render(desc) + "\n")
+			b.WriteString(cur + box + " " + o.label + "\n")
 		}
-		b.WriteString(okStyle.Render("  [x]") + " ODD — instrucciones y clasificación " + dimStyle.Render("(obligatorio)") + "\n\n")
-		row(0, m.optHooks, "Hooks de bloqueo (Claude Code)", "impiden editar en modo lectura, entregar sin pedirlo y cerrar sin evidencia")
-		row(1, m.optPerms, "Lista de archivos sensibles", "niega leer ~/.ssh, .env, *.pem, *.key y credenciales")
-		b.WriteString("\n" + dimStyle.Render("  Siempre con Claude Code: skills (5) y subagente revisor v-ia-reviewer."))
-		b.WriteString("\n" + dimStyle.Render("  Memoria: Engram "+map[bool]string{true: "detectado", false: "no detectado (opcional)"}[hasEngram()]))
+		b.WriteString("\n" + dimStyle.Render("  "+opts[m.cursor].desc))
 		return b.String(), help("↑↓", "mover", "espacio", "alternar", "enter", "revisar", "esc", "atrás")
 	case scReview:
 		return m.viewReview()
