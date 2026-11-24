@@ -91,9 +91,24 @@ v-ia install [--dry-run] [--yes] [--force] [--agent a,b] [--no-hooks] [--no-perm
 
 Con `--agent generic` escribe `AGENTS.md` en el **directorio actual** (útil para cualquier agente que lea ese archivo).
 
-### `v-ia` sin argumentos (TUI)
+### `v-ia` sin argumentos (terminal interactiva)
 
-En un terminal interactivo abre un asistente (Bubble Tea): bienvenida → agentes → componentes → revisión del diff → aplicar → resultado. Hace lo mismo que `install`, con hooks y permisos activados. Sin terminal interactivo, falla y te lista los comandos.
+En un terminal interactivo (Bubble Tea) abre un panel con el logo y un menú principal:
+
+1. **Instalar / configurar agentes**: agentes → componentes (hooks y lista de archivos sensibles se pueden desmarcar) → revisión del diff → aplicar → resultado con diagnóstico. Equivale a `install`.
+2. **Estado del sistema**: `doctor` (tecla `r` para refrescar).
+3. **Proyecto actual**: foto de solo lectura del directorio donde lo abriste: modo, RDD (ON/OFF y de dónde viene), recibo (vigente u obsoleto y veredicto del revisor), riesgo y fichas de `odd/tasks/`.
+4. **Sincronizar** y 5. **Desinstalar**: mismo flujo de revisión y aplicación que `sync`/`uninstall`.
+6. **Restaurar último backup**: pide confirmación.
+7. **Salir**.
+
+Teclas: `↑↓`/`j k` mover, `enter` elegir, `espacio` marcar, `f` forzar (conflictos, en la revisión), `esc` atrás, `q` salir, `ctrl+c` siempre. Mientras se aplica no se puede interrumpir (la escritura es atómica con rollback).
+
+**El logo** se genera desde `docs/assets/logo.png` con `python3 scripts/gen-banner.py` (necesita Pillow) y se embebe en el binario. Tiene tres tamaños según el terminal: grande (≥86×36), pequeño (≥54×24) y una línea. Sin color (`NO_COLOR` o sin TTY) el violeta se dibuja con sombreado `▒`. La vista nunca excede el tamaño del terminal (mínimo 60×18).
+
+Sin terminal interactivo (pipe, CI), `v-ia` falla y lista los comandos disponibles.
+
+> En terminales que no responden a la consulta de color de fondo, el arranque puede tardar hasta 5 s: es una característica de Bubble Tea v1, no de V-IA. Los terminales normales responden al instante; `tmux`/`screen` omiten la consulta.
 
 ### `v-ia sync`
 
@@ -479,8 +494,8 @@ internal/guard/      huella del árbol (guard) y candidate_id
 internal/review/     checks, riesgo, recibo, ack, modo ON/OFF
 internal/registry/   índice de skills
 internal/doctor/     diagnóstico
-internal/tui/        asistente Bubble Tea
-scripts/             e2e contra Claude Code y OpenCode reales
+internal/tui/        terminal interactiva Bubble Tea (banner, menú, flujos, paneles)
+scripts/             e2e contra Claude Code y OpenCode reales; gen-banner.py (logo)
 ```
 
 ## Cómo ampliarlo

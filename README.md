@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/logo.png" alt="V-AI" width="520"></p>
+
 # V-IA
 
 **Hace que un agente de IA trabaje con ODD (Organic Driven Development) y, donde se puede, que lo cumpla de verdad.**
@@ -77,6 +79,7 @@ git clone https://github.com/victorcarrillodev/V-IA.git
 cd V-IA
 go build -o ~/.local/bin/v-ia ./cmd/v-ia
 v-ia version            # → v-ia 0.3.0
+v-ia                    # abre la terminal interactiva (ver sección 5)
 ```
 
 `~/.local/bin` debe estar en tu `PATH`. **El binario tiene que llamarse `v-ia`**: los hooks lo invocan por ese nombre.
@@ -130,7 +133,23 @@ v-ia restore latest --yes       # vuelve al estado anterior, byte a byte
 
 ---
 
-## 5. Cómo se usa en el día a día
+## 5. La terminal interactiva
+
+Ejecuta `v-ia` sin argumentos en un terminal y se abre un panel con el logo y un menú:
+
+| Opción | Qué hace |
+|---|---|
+| Instalar / configurar agentes | Asistente: agentes → componentes (hooks, archivos sensibles) → revisión del diff → aplicar. |
+| Estado del sistema | El diagnóstico de `doctor`, con refresco (`r`). |
+| Proyecto actual | Modo, interruptor RDD, recibo (vigente u obsoleto), riesgo y fichas del directorio donde lo abriste. |
+| Sincronizar / Desinstalar | Mismo flujo de revisión y aplicación, con backup. |
+| Restaurar último backup | Con confirmación previa. |
+
+Teclas: `↑↓` o `j/k` mover · `enter` elegir · `espacio` marcar · `esc` volver · `q` salir. El logo se adapta al tamaño del terminal (grande, pequeño o una línea) y, sin color (`NO_COLOR`), se dibuja solo con formas. Mínimo 60×18.
+
+> Ábrelo dentro de la carpeta de tu proyecto si quieres ver el panel "Proyecto actual" de ese proyecto.
+
+## 6. Cómo se usa en el día a día
 
 Con los hooks instalados **no cambias nada de cómo trabajas**: hablas con Claude Code igual. V-IA actúa por detrás.
 
@@ -169,7 +188,7 @@ v-ia review check
 
 ---
 
-## 6. Qué comprobar si algo falla
+## 7. Qué comprobar si algo falla
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
@@ -185,7 +204,7 @@ Más en el [manual](docs/manual.md#solución-de-problemas).
 
 ---
 
-## 7. Límites conocidos
+## 8. Límites conocidos
 
 Lee esto antes de fiarte:
 
@@ -197,17 +216,17 @@ Lee esto antes de fiarte:
 - Codex, Gemini, Kilo, Qwen y Windsurf: rutas sin verificar con el agente real.
 - No hay releases ni binarios publicados; se compila desde el código fuente.
 
-## 8. Desarrollo y pruebas
+## 9. Desarrollo y pruebas
 
 ```bash
-go build ./... && go vet ./... && go test ./...      # 64 tests
+go build ./... && go vet ./... && go test ./...      # 74 tests
 V_IA_BIN=$PWD/v-ia ./scripts/e2e-claude.sh           # E1,E2,E3,E7 con Claude real (consume tokens)
 V_IA_BIN=$PWD/v-ia ./scripts/e2e-opencode.sh         # E1–E4 con OpenCode real (modelo gratuito)
 ```
 
 Los scripts end-to-end instalan los hooks **solo en un proyecto temporal** y no tocan tu configuración.
 
-## 9. Documentos del repositorio
+## 10. Documentos del repositorio
 
 | Archivo | Contenido |
 |---|---|

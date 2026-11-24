@@ -72,8 +72,8 @@ func TestFlujoCompleto(t *testing.T) {
 		t.Fatal("falta el resultado de doctor")
 	}
 	m = send(t, m, "enter")
-	if !m.Quitting() {
-		t.Fatal("enter en Final debe salir")
+	if m.Quitting() || m.Screen() != int(scHome) {
+		t.Fatalf("enter en Final debe volver al menú, no salir (pantalla=%d)", m.Screen())
 	}
 }
 
@@ -150,5 +150,131 @@ func TestQSale(t *testing.T) {
 	m = send(t, m, "q")
 	if !m.Quitting() {
 		t.Fatal("q debe salir")
+	}
+}
+
+func TestMenuNavegacionYSalir(t *testing.T) {
+	m, _ := newModel(t)
+	m = send(t, m, "j")
+	m = send(t, m, "j")
+	if m.cursor != 2 {
+		t.Fatalf("cursor=%d", m.cursor)
+	}
+	m = send(t, m, "k")
+	if m.cursor != 1 {
+		t.Fatalf("cursor=%d", m.cursor)
+	}
+	for i := 0; i < 10; i++ {
+		m = send(t, m, "down")
+	}
+	if m.cursor != len(menu)-1 {
+		t.Fatalf("el cursor no debe pasarse del final: %d", m.cursor)
+	}
+	m = send(t, m, "enter") // Salir
+	if !m.Quitting() {
+		t.Fatal("la opción Salir debe salir")
+	}
+}
+
+func goTo(t *testing.T, m Model, idx int) Model {
+	t.Helper()
+	for i := 0; i < idx; i++ {
+		m = send(t, m, "j")
+	}
+	return send(t, m, "enter")
+}
+
+func TestEstadoYProyectoSonSoloLectura(t *testing.T) {
+	m, home := newModel(t)
+	m = goTo(t, m, 1)
+	if m.Screen() != int(scStatus) || len(m.Results()) == 0 {
+		t.Fatalf("pantalla=%d resultados=%d", m.Screen(), len(m.Results()))
+	}
+	if !strings.Contains(m.View(), "Estado del sistema") {
+		t.Fatal("falta el título")
+	}
+	m = send(t, m, "esc")
+	m.cwd = t.TempDir()
+	m = goTo(t, m, 2)
+	v := m.View()
+	if m.Screen() != int(scProject) || !strings.Contains(v, "Modo") || !strings.Contains(v, "Recibo") || !strings.Contains(v, "Riesgo") {
+		t.Fatalf("panel de proyecto incompleto:\n%s", v)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude")); err == nil {
+		t.Fatal("estado y proyecto no deben escribir nada")
+	}
+}
+
+func TestInstalarSincronizarDesinstalarYRestaurar(t *testing.T) {
+	m, home := newModel(t)
+	for _, k := range []string{"enter", "enter", "enter", "enter"} { // instalar completo
+		m = send(t, m, k)
+	}
+	claude := filepath.Join(home, ".claude", "CLAUDE.md")
+	if _, err := os.Stat(claude); err != nil {
+		t.Fatalf("no se instaló: %v", err)
+	}
+	m = send(t, m, "enter") // Final → menú
+	m = goTo(t, m, 3)       // Sincronizar: ya está al día
+	if m.Screen() != int(scReview) || len(m.Plan().Changes()) != 0 || m.Op() != int(opSync) {
+		t.Fatalf("sync tras instalar debe estar al día: pantalla=%d cambios=%d", m.Screen(), len(m.Plan().Changes()))
+	}
+	m = send(t, m, "enter")
+	if m.Screen() != int(scDone) || !strings.Contains(m.View(), "Nada que cambiar") {
+		t.Fatal("sin cambios debe decir 'Nada que cambiar'")
+	}
+	m = send(t, m, "enter") // menú
+	m = goTo(t, m, 4)       // Desinstalar
+	if m.Op() != int(opUninstall) || len(m.Plan().Changes()) < 2 {
+		t.Fatalf("uninstall debe planear retiradas: %d", len(m.Plan().Changes()))
+	}
+	m = send(t, m, "enter")
+	if m.ApplyErr() != nil || m.Screen() != int(scDone) {
+		t.Fatalf("uninstall falló: %v", m.ApplyErr())
+	}
+	if b, _ := os.ReadFile(claude); strings.Contains(string(b), "v-ia:managed") {
+		t.Fatal("el bloque debía retirarse")
+	}
+	m = send(t, m, "enter") // menú
+	m = goTo(t, m, 5)       // Restaurar
+	if m.Screen() != int(scRestore) || m.restoreDir == "" {
+		t.Fatal("debe ofrecer el último backup")
+	}
+	m = send(t, m, "enter")
+	if m.ApplyErr() != nil || m.Screen() != int(scDone) {
+		t.Fatalf("restaurar falló: %v", m.ApplyErr())
+	}
+	if b, _ := os.ReadFile(claude); !strings.Contains(string(b), "v-ia:managed begin id=odd") {
+		t.Fatal("restaurar debe devolver el bloque")
+	}
+}
+
+func TestRestaurarSinBackups(t *testing.T) {
+	m, _ := newModel(t)
+	m = goTo(t, m, 5)
+	if m.Screen() != int(scRestore) || !strings.Contains(m.View(), "No hay backups") {
+		t.Fatal("debe avisar que no hay backups")
+	}
+	m = send(t, m, "enter")
+	if m.Screen() != int(scRestore) {
+		t.Fatal("enter sin backup no debe hacer nada")
+	}
+}
+
+func TestComponentesAlternanHooksYPermisos(t *testing.T) {
+	m, _ := newModel(t)
+	m = send(t, m, "enter")
+	m = send(t, m, "enter") // componentes
+	m = send(t, m, " ")     // hooks off
+	m = send(t, m, "j")
+	m = send(t, m, " ") // permisos off
+	if m.optHooks || m.optPerms {
+		t.Fatalf("hooks=%v perms=%v", m.optHooks, m.optPerms)
+	}
+	m = send(t, m, "enter")
+	for _, a := range m.Plan().Actions {
+		if strings.HasSuffix(a.Path, "settings.json") {
+			t.Fatal("sin hooks ni permisos no se toca settings.json")
+		}
 	}
 }

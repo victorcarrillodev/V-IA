@@ -69,8 +69,12 @@ func TestClassify(t *testing.T) {
 }
 
 func TestAssessOutsideGitIsUnknown(t *testing.T) {
-	if a := Assess(t.TempDir(), ""); a.Tier != TierUnknown {
+	a := Assess(t.TempDir(), "")
+	if a.Tier != TierUnknown {
 		t.Fatalf("sin git no debe asumir riesgo bajo: %+v", a)
+	}
+	if len(a.Reasons) != 1 || len(a.Reasons[0]) > 100 {
+		t.Fatalf("el motivo debe ser una frase corta, no la ayuda de git: %q", a.Reasons)
 	}
 }
 

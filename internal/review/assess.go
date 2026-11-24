@@ -39,7 +39,11 @@ func git(root string, args ...string) (string, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %v %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		msg := strings.TrimSpace(errb.String())
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = msg[:i] // solo la primera línea: git vuelca su ayuda entera en algunos errores
+		}
+		return "", fmt.Errorf("git %s: %v %s", strings.Join(args, " "), err, msg)
 	}
 	return out.String(), nil
 }
@@ -48,6 +52,9 @@ func git(root string, args ...string) (string, error) {
 func Assess(root, base string) Assessment {
 	if base == "" {
 		base = "HEAD"
+	}
+	if out, err := git(root, "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(out) != "true" {
+		return Assessment{Tier: TierUnknown, Reasons: []string{"no es un repositorio git: no se puede evaluar el cambio"}}
 	}
 	if base == "HEAD" {
 		if _, err := git(root, "rev-parse", "--verify", "-q", "HEAD"); err != nil {

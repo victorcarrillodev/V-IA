@@ -170,3 +170,6 @@ func Verify(root string, requireAck bool) error {
 	}
 	return nil
 }
+
+// Load devuelve el último recibo guardado (para mostrarlo; no lo valida).
+func Load(root string) (Receipt, error) { return load(root) }
