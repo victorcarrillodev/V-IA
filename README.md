@@ -208,6 +208,18 @@ v-ia review check
 
 ---
 
+## 6b. Estándares del proyecto (`v-ia standards`)
+
+Reglas propias del proyecto (dónde van los archivos, patrones prohibidos, criterios en lenguaje natural) revisadas antes de entregar:
+
+```bash
+v-ia standards init       # crea .v-ia/standards.md con ejemplos
+v-ia standards check      # revisa lo que está en staging
+v-ia standards install    # pre-commit de Git (avisa; --strict bloquea)
+```
+
+Las reglas `path` y `deny` se evalúan en local **sin gastar tokens**; solo las `ai` usan un agente, con una única llamada barata por revisión y caché. Si el agente falla, no bloquea. Detalle en el [manual](docs/manual.md#estándares-del-proyecto-v-ia-standards).
+
 ## 7. Qué comprobar si algo falla
 
 | Síntoma | Causa probable | Solución |
@@ -240,10 +252,12 @@ Lee esto antes de fiarte:
 ## 9. Desarrollo y pruebas
 
 ```bash
-go build ./... && go vet ./... && go test ./...      # 74 tests
+go build ./... && go vet ./... && go test ./...      # incluye pruebas anti-huérfanos (internal/lifecycle/orphans_test.go)
 V_IA_BIN=$PWD/v-ia ./scripts/e2e-claude.sh           # E1,E2,E3,E7 con Claude real (consume tokens)
 V_IA_BIN=$PWD/v-ia ./scripts/e2e-opencode.sh         # E1–E4 con OpenCode real (modelo gratuito)
 ```
+
+`internal/lifecycle/orphans_test.go` falla si una skill o archivo embebido queda sin usar, o si un comando no está documentado en el manual.
 
 Los scripts end-to-end instalan los hooks **solo en un proyecto temporal** y no tocan tu configuración.
 

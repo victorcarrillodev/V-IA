@@ -10,6 +10,7 @@ Contenido:
 4. [Modos: lectura, edición y seguimiento](#modos-lectura-edición-y-seguimiento)
 5. [La ficha ODD (`odd/tasks/`)](#la-ficha-odd-oddtasks)
 6. [RDD: recibo, riesgo y revisor](#rdd-recibo-riesgo-y-revisor)
+   - Estándares del proyecto: [`v-ia standards`](#estándares-del-proyecto-v-ia-standards)
    - Componentes opcionales: [Engram, Context7, CodeGraph](#componentes-opcionales-engram-context7-codegraph)
 7. [Skills y registro](#skills-y-registro)
 8. [Memoria (Engram)](#memoria-engram)
@@ -376,6 +377,45 @@ Estado de verificación: cubierto por pruebas unitarias con ejecución simulada.
 
 ---
 
+## Estándares del proyecto (`v-ia standards`)
+
+Revisa los cambios **antes de entregarlos** contra reglas que escribes en `.v-ia/standards.md`. Es la alternativa propia de V-IA a herramientas como GGA: pensada para gastar los menos tokens posibles.
+
+```bash
+v-ia standards init        # crea .v-ia/standards.md con ejemplos
+v-ia standards check       # revisa lo que está en staging
+v-ia standards install     # pre-commit de Git (solo avisa); --strict para bloquear
+v-ia standards status      # reglas, hook y caché
+v-ia standards off         # quita el hook (las reglas se conservan)
+```
+
+**Reglas** (separadas por `---`, formato `clave: valor`):
+
+| Tipo | Qué comprueba | Coste |
+|---|---|---|
+| `path` | los archivos **nuevos** que casan con `paths` deben estar bajo `where` | 0 tokens |
+| `deny` | las líneas **añadidas** en `paths` no pueden casar con `pattern` (regex) | 0 tokens |
+| `ai` | un criterio en lenguaje natural (`text`) que revisa un agente | tokens |
+
+`paths` y `where` son globs separados por coma (`**` cruza carpetas). Solo se miran las líneas añadidas: el código antiguo no genera ruido.
+
+**Cómo ahorra tokens**
+- Las reglas `path` y `deny` se evalúan en local, en milisegundos.
+- A la IA solo van las líneas añadidas de los archivos a los que cada regla aplica (`paths`). Se ignoran lockfiles, generados, binarios y `vendor/`; hay tope de tamaño por archivo (6 KB) y por llamada (24 KB), y se avisa de lo omitido.
+- **Una sola llamada por revisión** (`claude -p --model haiku`, sin herramientas, hooks ni sesión) con respuesta JSON.
+- **Caché** en `.v-ia/standards-cache.json`, por (regla, archivo, fragmento). Si no cambia el fragmento ni la regla, no se vuelve a pagar: la segunda revisión tarda milisegundos. Un fallo del agente no se guarda en la caché. Versiona `.v-ia/standards.md` (son las reglas del equipo) y deja fuera `.v-ia/standards-cache.json`.
+
+**Seguridad de uso**
+- **Avisa por defecto.** Con `--strict` (o `install --strict`) bloquea si hay incumplimientos.
+- **Fail-open:** si el agente no está, falla o tarda más del tiempo máximo (`--timeout`, 90 s), se avisa y se sigue con lo local; una caída nunca bloquea por sí sola. Con reglas ilegibles, el hook avisa y deja pasar.
+- El hook de pre-commit conserva el tuyo (bloque entre marcadores) y vale para commits tuyos y del agente. Saltarlo: `V_IA_SKIP_STANDARDS=1` u `--no-verify`.
+- `v-ia review check` incluye la parte local (sin tokens) como avisos `! estándares:`.
+- Otras opciones de `check`: `--head` (árbol de trabajo en vez de staging), `--no-ai`, `--model` (o `V_IA_STANDARDS_MODEL`).
+
+Convive con RDD sin solaparse: RDD emite el recibo de entrega; `standards` revisa el estilo del proyecto. Verificado con Claude Code real; otros agentes no están soportados como revisor. La parte con IA puede dar falsos positivos, por eso empieza en modo aviso.
+
+---
+
 ## Seguridad
 
 **Deny-list** que se siembra en `permissions.deny` de `settings.json` (solo si esa clave no existe; una lista vacía tuya se respeta):
@@ -431,6 +471,7 @@ No soportados todavía: Cursor, VS Code Copilot, Kiro, Kimi, Antigravity y el re
 | `v-ia review assess [--base-ref REF]` | Evalúa el riesgo (JSON). |
 | `v-ia review ack --verdict approve\|changes [--reviewer X] [--note "…"]` | Registra el veredicto del revisor. |
 | `v-ia review mode status\|enable\|disable [--scope global\|project]` | Interruptor RDD. |
+| `v-ia standards init\|check\|install\|off\|status` | Revisión de estándares del proyecto (ver sección). |
 | `v-ia skill-registry list\|refresh` | Índice de skills. |
 | `v-ia hook pre\|prompt\|stop\|session` | **Interno**: lo invocan los hooks; no lo ejecutes a mano. |
 
@@ -530,6 +571,7 @@ internal/review/     checks, riesgo, recibo, ack, modo ON/OFF
 internal/registry/   índice de skills
 internal/doctor/     diagnóstico
 internal/extras/     Engram, Context7, CodeGraph: planifica y ejecuta sus comandos oficiales
+internal/standards/  reglas path/deny/ai, revisión de staging, caché y hook de pre-commit
 internal/tui/        terminal interactiva Bubble Tea (banner, menú, flujos, paneles)
 scripts/             e2e contra Claude Code y OpenCode reales; gen-banner.py (logo)
 install.sh           instalador de una línea (descarga la release)

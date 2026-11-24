@@ -21,6 +21,7 @@ import (
 	"v-ia/internal/lifecycle"
 	"v-ia/internal/registry"
 	"v-ia/internal/review"
+	"v-ia/internal/standards"
 	"v-ia/internal/task"
 	"v-ia/internal/tui"
 )
@@ -62,6 +63,8 @@ func run(args []string) int {
 		return cmdMode(args[1:])
 	case "review":
 		return cmdReview(args[1:])
+	case "standards":
+		return cmdStandards(args[1:])
 	case "skill-registry":
 		return cmdRegistry(args[1:])
 	}
@@ -460,6 +463,13 @@ func cmdReview(args []string) int {
 			fmt.Printf("%s %s\n", mark, c.Cmd)
 			if c.Exit != 0 {
 				fmt.Println(c.Output)
+			}
+		}
+		if rules, found, err := standards.Load(root); found && err == nil {
+			if files, err := standards.Changes(root, standards.Head); err == nil {
+				for _, f := range standards.Deterministic(rules, files) {
+					fmt.Println("! estándares:", f)
+				}
 			}
 		}
 		fmt.Printf("riesgo: %s (%s)\n", r.Risk.Tier, strings.Join(r.Risk.Reasons, "; "))

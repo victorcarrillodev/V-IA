@@ -44,7 +44,6 @@ V-IA/
 │   ├── odd/
 │   │   ├── odd.md              # instrucciones ODD canónicas
 │   │   ├── classify.md         # reglas de clasificación (lectura/acotado/seguimiento)
-│   │   ├── delegation.md       # política de subagentes
 │   │   └── templates/
 │   │       └── task.md         # plantilla odd/tasks/<feature>.md
 │   ├── memory/
@@ -434,7 +433,6 @@ Tu `~/.claude/CLAUDE.md` ya tiene reglas de ahorro de tokens, Serena y graphify.
 - **Aceptación:** cambiar un byte del candidato invalida el recibo; OFF de clon se retira sin anular OFF global; un `pass` nunca dispara commit/push.
 
 ### Fase 5 — Subagentes (1 día)
-- `delegation.md`, skill `odd-delegate`, contrato entrada/salida, manejo de resultado parcial.
 - **Aceptación:** una tarea grande sin motivo válido **no** delega; una exploración ruidosa sí; un subagente agotado devuelve parcial y el principal continúa.
 
 ### Fase 6 — Multi-agente (2–3 días)
