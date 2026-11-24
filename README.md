@@ -43,7 +43,7 @@ V-IA hace tres cosas:
 | **Hooks (solo Claude Code)** | Bloquean ediciones en modo lectura, commits no pedidos, comandos destructivos y cierres sin evidencia. |
 | **Herramientas** | `task`, `guard`, `review`, `skill-registry`… que el agente (o tú) ejecutan para comprobar. |
 
-Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **5 skills**, un **subagente revisor**, integración opcional con **Engram** (memoria), **Context7** (documentación por MCP) y **CodeGraph** (grafo de código) y una **deny-list** de archivos sensibles.
+Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **12 skills**, un **subagente revisor**, integración opcional con **Engram** (memoria), **Context7** (documentación por MCP) y **CodeGraph** (grafo de código) y una **deny-list** de archivos sensibles.
 
 ## 3. Qué agentes soporta
 
@@ -119,29 +119,40 @@ Qué escribe para Claude Code:
 |---|---|
 | `~/.claude/CLAUDE.md` | Bloque ODD entre marcadores `<!-- v-ia:managed … -->`. Tu contenido no se toca. |
 | `~/.claude/settings.json` | 4 hooks (`PreToolUse`, `UserPromptSubmit`, `Stop`, `SessionStart`) + deny-list de archivos sensibles. |
-| `~/.claude/skills/<skill>/SKILL.md` | 5 skills: `odd-resume`, `odd-verify`, `odd-delegate`, `rdd-review`, `work-unit-commits`. |
+| `~/.claude/skills/<skill>/SKILL.md` | 12 skills: `odd-resume`, `odd-verify`, `odd-delegate`, `rdd-review`, `work-unit-commits`, `branch-pr`, `issue-creation`, `chained-pr`, `judgment-day`, `skill-creator`, `comment-writer`, `rdd-defect-workflow`. |
 | `~/.claude/agents/v-ia-reviewer.md` | Subagente revisor independiente (solo lectura). |
 
 > ⚠️ `settings.json` se reescribe con las claves en **orden alfabético** (el contenido se conserva, el formato cambia). Si tienes comentarios o un JSON no estricto, V-IA se niega a tocarlo.
 
-Opciones: `--no-hooks`, `--no-permissions`, `--force`, `--engram`, `--context7`, `--codegraph`, `--all`. Detalle en el [manual](docs/manual.md#instalación-y-ciclo-de-vida).
+Opciones: `--no-hooks`, `--no-permissions`, `--force`, `--engram`, `--context7`, `--codegraph`, `--all`. Para instalar solo lo que falte de los opcionales: `v-ia deps`. Detalle en el [manual](docs/manual.md#instalación-y-ciclo-de-vida).
 
 ### 4.4 Componentes opcionales: Engram, Context7, CodeGraph
 
 ```bash
-v-ia install --dry-run --all    # ver qué comandos ejecutaría
-v-ia install --yes --all        # todo de una vez (o --engram / --context7 / --codegraph)
+v-ia deps               # qué falta y qué se ejecutaría; pregunta antes de instalar
+v-ia deps --yes         # instala lo que falte (sin sudo)
+v-ia install --yes --all    # configura agentes e instala los componentes de una vez
 ```
 
-| Componente | Qué aporta | Requisitos |
+| Componente | Qué aporta | Si falta, V-IA lo instala con |
 |---|---|---|
-| **Engram** | Memoria entre sesiones | `engram` |
-| **Context7** | Documentación actual de librerías por MCP | `claude`, `npx` (Node 18+) |
-| **CodeGraph** | Grafo de conocimiento del código por MCP | `claude`, `npm` |
+| **Engram** | Memoria entre sesiones | `go install` (en `~/.local/bin`) o `brew` |
+| **Context7** | Documentación actual de librerías | MCP remoto de Claude Code (no necesita Node) |
+| **CodeGraph** | Grafo de conocimiento del código | `npm` o su instalador oficial |
 
-V-IA no los reimplementa: ejecuta sus comandos oficiales (con versión fijada), tras comprobar que no falta ningún requisito y antes de escribir nada propio. Con `--dry-run` ves los comandos aunque falte algún requisito. También son casillas en la terminal interactiva (paso *Componentes*), y `v-ia doctor` informa de su estado. CodeGraph escribe además instrucciones propias en `~/.claude/CLAUDE.md`. Sin ninguno de ellos V-IA funciona igual. Detalle y límites en el [manual](docs/manual.md#componentes-opcionales-engram-context7-codegraph).
+Nunca usa `sudo` y solo falla si no puede instalar algo por ti (por ejemplo, sin `claude`). También son casillas en la terminal interactiva, y `v-ia doctor` informa de su estado. CodeGraph escribe además instrucciones propias en `~/.claude/CLAUDE.md`. Detalle y límites en el [manual](docs/manual.md#componentes-opcionales-engram-context7-codegraph).
 
-> No verificado contra las herramientas reales (sin Node en la máquina de desarrollo): lo probado es la lógica con ejecución simulada.
+> Verificado: Engram y Context7 se instalaron de verdad en un HOME temporal. CodeGraph no se ha ejecutado contra su instalador real.
+
+### 4.4b Actualizar
+
+```bash
+v-ia update --check     # ¿hay versión nueva?
+v-ia update             # descarga la release, verifica sha256 y reemplaza el binario
+v-ia sync --yes         # refresca los archivos gestionados
+```
+
+Requiere una release publicada. Desde el código fuente: `v-ia upgrade --src <repo>`.
 
 ### 4.5 Deshacer
 
@@ -247,6 +258,7 @@ Lee esto antes de fiarte:
 - Engram no está probado con el binario real; solo con uno simulado.
 - Codex, Gemini, Kilo, Qwen y Windsurf: rutas sin verificar con el agente real.
 - Aún no hay release publicada: hasta entonces se compila desde el código fuente (4.1–4.2). El instalador de una línea no se ha probado contra una release real.
+- **Frente a Gentle-AI** (el proyecto que inspiró este): V-IA es mucho más pequeño. Tiene 12 skills (ellos, una biblioteca amplia), 2 agentes verificados con agentes reales (ellos, 17), solo Linux probado (ellos, macOS/Linux/Windows con releases firmadas), un RDD local con recibo (ellos, transacciones atómicas y proveedores de revisión) y sin benchmarks, personas ni telemetría. Su diferencia es el bloqueo duro por hooks en Claude Code, `v-ia standards` y `v-ia deps`.
 - El logo como imagen real solo está pensado para Ghostty y kitty; no funciona dentro de tmux (ahí se usan bloques).
 
 ## 9. Desarrollo y pruebas

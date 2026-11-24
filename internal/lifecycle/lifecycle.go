@@ -24,7 +24,7 @@ type Options struct {
 	Permissions bool
 }
 
-var skillNames = []string{"odd-resume", "odd-verify", "odd-delegate", "rdd-review", "work-unit-commits"}
+var skillNames = []string{"odd-resume", "odd-verify", "odd-delegate", "rdd-review", "work-unit-commits", "branch-pr", "issue-creation", "chained-pr", "judgment-day", "skill-creator", "comment-writer", "rdd-defect-workflow"}
 
 // ExeForHooks devuelve la ruta con la que los hooks llamarán a v-ia.
 func ExeForHooks() string {

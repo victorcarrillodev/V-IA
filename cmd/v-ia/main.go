@@ -63,6 +63,10 @@ func run(args []string) int {
 		return cmdMode(args[1:])
 	case "review":
 		return cmdReview(args[1:])
+	case "update":
+		return cmdUpdate(args[1:])
+	case "deps":
+		return cmdDeps(args[1:])
 	case "standards":
 		return cmdStandards(args[1:])
 	case "skill-registry":

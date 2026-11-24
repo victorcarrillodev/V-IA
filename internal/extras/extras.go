@@ -28,9 +28,9 @@ type Info struct {
 }
 
 var infos = map[string]Info{
-	Engram:   {Engram, "Engram — memoria entre sesiones", "ejecuta 'engram setup claude-code' (requiere engram)", ""},
-	Context7: {Context7, "Context7 — documentación actual por MCP", "registra el servidor MCP @upstash/context7-mcp (requiere claude y Node/npx)", ""},
-	CodeGraph: {CodeGraph, "CodeGraph — grafo de código por MCP", "instala @colbymchenry/codegraph y lo registra en Claude Code (requiere claude y npm)",
+	Engram:   {Engram, "Engram — memoria entre sesiones", "instala engram (go install o brew) si falta y ejecuta 'engram setup claude-code'", ""},
+	Context7: {Context7, "Context7 — documentación actual por MCP", "registra el MCP remoto de Context7 (no necesita Node; requiere claude)", ""},
+	CodeGraph: {CodeGraph, "CodeGraph — grafo de código por MCP", "instala CodeGraph si falta (npm o su instalador) y lo registra en Claude Code",
 		"su instalador también escribe instrucciones en ~/.claude/CLAUDE.md; luego ejecuta 'codegraph init -i' en cada proyecto"},
 }
 
@@ -42,6 +42,7 @@ type Step struct {
 	Desc string
 	Name string
 	Args []string
+	Env  []string // variables extra (KEY=valor)
 }
 
 func (s Step) String() string { return strings.TrimSpace(s.Name + " " + strings.Join(s.Args, " ")) }
@@ -51,6 +52,7 @@ var (
 	LookPath = exec.LookPath
 	Exec     = func(s Step, out io.Writer) error {
 		c := exec.Command(s.Name, s.Args...)
+		c.Env = append(os.Environ(), s.Env...)
 		c.Stdout, c.Stderr = out, out
 		return c.Run()
 	}
@@ -58,11 +60,20 @@ var (
 
 func have(bin string) bool { _, err := LookPath(bin); return err == nil }
 
-// Versiones fijadas (cadena de suministro): se actualizan a propósito, no con "latest".
+// Versiones y orígenes fijados (cadena de suministro): se actualizan a propósito, no con "latest".
 const (
-	Context7Pkg  = "@upstash/context7-mcp@4.7.3"
-	CodeGraphPkg = "@colbymchenry/codegraph@1.6.4"
+	Context7URL     = "https://mcp.context7.com/mcp"
+	CodeGraphPkg    = "@colbymchenry/codegraph@1.6.4"
+	CodeGraphScript = "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh"
+	EngramPkg       = "github.com/Gentleman-Programming/engram/v3/cmd/engram@v3.7.2"
+	EngramBrew      = "gentleman-programming/tap/engram"
 )
+
+// binDir es donde V-IA deja los binarios que instala (sin sudo).
+func binDir() string {
+	h, _ := os.UserHomeDir()
+	return filepath.Join(h, ".local", "bin")
+}
 
 // registered detecta si Claude Code ya conoce un servidor MCP de alcance usuario, leyendo
 // "mcpServers" de ~/.claude.json (más rápido y seguro que 'claude mcp list', que conecta con
@@ -82,9 +93,11 @@ func registered(home, name string) bool {
 	return ok
 }
 
-// Installed indica si el extra ya está listo. Engram no se puede saber: siempre false.
+// Installed indica si el extra ya está listo (binario presente y servidor MCP registrado).
 func Installed(home, id string) bool {
 	switch id {
+	case Engram:
+		return have("engram") && registered(home, "engram")
 	case Context7:
 		return registered(home, "context7")
 	case CodeGraph:
@@ -123,19 +136,35 @@ func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
 		}
 		switch id {
 		case Engram:
-			need(id, "engram")
-			steps = append(steps, Step{"configurar Engram para Claude Code", "engram", []string{"setup", "claude-code"}})
+			if !have("engram") {
+				switch {
+				case have("go"):
+					steps = append(steps, Step{"instalar Engram con go install (en ~/.local/bin)", "go", []string{"install", EngramPkg}, []string{"GOBIN=" + binDir()}})
+				case have("brew"):
+					steps = append(steps, Step{"instalar Engram con Homebrew", "brew", []string{"install", EngramBrew}, nil})
+				default:
+					missing = append(missing, "engram no está y no hay 'go' ni 'brew' para instalarlo (binarios: https://github.com/Gentleman-Programming/engram/releases)")
+				}
+			}
+			steps = append(steps, Step{"configurar Engram para Claude Code", "engram", []string{"setup", "claude-code"}, nil})
 		case Context7:
-			need(id, "claude", "npx")
-			steps = append(steps, Step{"registrar Context7 (MCP, alcance de usuario)", "claude",
-				[]string{"mcp", "add", "--scope", "user", "context7", "--", "npx", "-y", Context7Pkg}})
+			need(id, "claude")
+			steps = append(steps, Step{"registrar Context7 (MCP remoto, alcance de usuario)", "claude",
+				[]string{"mcp", "add", "--scope", "user", "--transport", "http", "context7", Context7URL}, nil})
 		case CodeGraph:
 			need(id, "claude")
 			if !have("codegraph") {
-				need(id, "npm")
-				steps = append(steps, Step{"instalar CodeGraph (global)", "npm", []string{"install", "-g", CodeGraphPkg}})
+				switch {
+				case have("npm"):
+					steps = append(steps, Step{"instalar CodeGraph con npm (global)", "npm", []string{"install", "-g", CodeGraphPkg}, nil})
+				case have("curl"):
+					steps = append(steps, Step{"instalar CodeGraph con su instalador oficial (descarga y ejecuta un script remoto)", "sh",
+						[]string{"-c", "curl -fsSL " + CodeGraphScript + " | sh"}, nil})
+				default:
+					missing = append(missing, "codegraph no está y no hay 'npm' ni 'curl' para instalarlo")
+				}
 			}
-			steps = append(steps, Step{"registrar CodeGraph en Claude Code", "codegraph", []string{"install", "--yes", "--target=claude"}})
+			steps = append(steps, Step{"registrar CodeGraph en Claude Code", "codegraph", []string{"install", "--yes", "--target=claude"}, nil})
 			notes = append(notes, "codegraph: "+infos[id].Warn)
 		}
 	}
@@ -147,6 +176,10 @@ func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
 
 // Run ejecuta los pasos en orden y se detiene en el primer error.
 func Run(steps []Step, out io.Writer) error {
+	// lo instalado en ~/.local/bin debe resolverse en los pasos siguientes
+	if p := os.Getenv("PATH"); !strings.Contains(":"+p+":", ":"+binDir()+":") {
+		os.Setenv("PATH", binDir()+":"+p)
+	}
 	for _, s := range steps {
 		fmt.Fprintf(out, "→ %s: %s\n", s.Desc, s)
 		if err := Exec(s, out); err != nil {
@@ -162,14 +195,14 @@ type Item struct {
 	OK      bool
 }
 
-// Status resume Context7 y CodeGraph (Engram ya lo informa doctor).
+// Status resume los tres opcionales.
 func Status(home string) []Item {
 	var out []Item
-	for _, id := range []string{Context7, CodeGraph} {
+	for _, id := range []string{Engram, Context7, CodeGraph} {
 		ok := Installed(home, id)
 		msg := id + ": instalado"
 		if !ok {
-			msg = id + ": no instalado (opcional) → v-ia install --" + id
+			msg = id + ": no instalado (opcional) → v-ia deps"
 		}
 		out = append(out, Item{id, msg, ok})
 	}

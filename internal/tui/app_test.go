@@ -299,7 +299,7 @@ func TestComponentesOpcionalesAparecenEnLaRevision(t *testing.T) {
 	if m.planErr != nil {
 		t.Fatalf("planErr=%v", m.planErr)
 	}
-	if !strings.Contains(strings.Join(m.diff, "\n"), "$ claude mcp add --scope user context7") {
+	if !strings.Contains(strings.Join(m.diff, "\n"), "$ claude mcp add --scope user --transport http context7") {
 		t.Fatalf("la revisión debe mostrar el comando de Context7:\n%v", m.diff)
 	}
 }

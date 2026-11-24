@@ -35,7 +35,7 @@ core/ (fuente de verdad, embebida en el binario)
   odd/classify.md     reglas de clasificación Lectura/Acotado/Seguimiento
   odd/templates/task.md   plantilla de la ficha
   memory/memory-protocol.md   protocolo de memoria
-  skills/*/SKILL.md   5 skills
+  skills/*/SKILL.md   12 skills
   agents/v-ia-reviewer.md   subagente revisor
         │
         ▼  lifecycle.Install / Sync / Uninstall  (solo PLANIFICA)
@@ -127,6 +127,14 @@ Quita los bloques ODD, los hooks, las skills y el subagente. Conserva:
 - la **deny-list** de permisos (es decisión tuya; quítala editando `permissions.deny`).
 
 Si un archivo solo contenía nuestro bloque, se borra.
+
+### `v-ia update`
+
+```
+v-ia update --check      # ¿hay versión nueva?
+v-ia update              # descarga, verifica y reemplaza (pregunta antes)
+```
+Baja `v-ia_<so>_<arquitectura>.tar.gz` de la última release, comprueba su `sha256` contra `checksums.txt` y solo entonces reemplaza el binario (atómico, misma carpeta). Si el hash no coincide, aborta sin tocar nada. Además, si tienes la CLI `gh`, verifica la **atestación Sigstore** de la release (la construyó el workflow de este repositorio): `v-ia update --no-attestation` la omite para releases que no la tengan. Sin `gh` avisa de que solo se comprobó el hash. Validaciones adicionales: la etiqueta debe ser `vX.Y.Z`, `checksums.txt` no puede contradecirse, el binario extraído tiene tope de 200 MB y se hace `fsync` antes del reemplazo. Tras actualizar, ejecuta `v-ia sync --yes`. Falla con un mensaje claro si no hay releases o el repositorio es privado. `upgrade` es el camino alternativo desde el código fuente.
 
 ### `v-ia upgrade`
 
@@ -323,6 +331,13 @@ Instaladas en `~/.claude/skills/` (solo Claude Code):
 | `odd-delegate` | Decidir si delegar. Solo con un motivo: exploración, escritores paralelos independientes, respaldo de contexto o verificador independiente. "Muchos archivos" no es motivo. |
 | `rdd-review` | Flujo de revisión según el riesgo. |
 | `work-unit-commits` | Commits por unidad de trabajo (~400 líneas como guía, Conventional Commits, riesgo alto en su propio commit). |
+| `branch-pr` | Rama y PR: política del repositorio destino, título Conventional Commits, descripción con evidencia. Solo si lo pides. |
+| `issue-creation` | Issues accionables: busca duplicados, usa plantillas, separa lo observado de las hipótesis. |
+| `chained-pr` | Divide un cambio grande en PRs encadenados, cada uno compila y pasa pruebas. |
+| `judgment-day` | Revisión adversarial: dos `v-ia-reviewer` independientes en paralelo y reconciliación comprobada. |
+| `skill-creator` | Crear o mejorar skills (frontmatter, descripción activable, reglas de V-IA). |
+| `comment-writer` | Comentarios de revisión y respuestas claras, con `ruta:línea` y separando lo bloqueante. |
+| `rdd-defect-workflow` | Defectos con evidencia: reproducir (RED), causa raíz, arreglo mínimo, comprobar (GREEN). |
 
 ### Registro de skills
 
@@ -348,10 +363,35 @@ Sin `engram` en el PATH, todo lo demás funciona; solo no hay memoria entre sesi
 
 ## Componentes opcionales (Engram, Context7, CodeGraph)
 
-Herramientas de terceros que V-IA **no reimplementa**: ejecuta sus comandos oficiales de instalación. Son opcionales y solo se verifican con Claude Code.
+Herramientas de terceros que V-IA **no reimplementa**: ejecuta sus instaladores y comandos oficiales, **y si falta algo lo instala (con tu confirmación) en vez de fallar**. Nunca usa `sudo`. Solo verificados con Claude Code.
 
-| Componente | Qué aporta | Comandos que ejecuta | Requisitos |
-|---|---|---|---|
+```bash
+v-ia deps                  # qué falta y qué se ejecutaría; pregunta [s/N]
+v-ia deps --yes            # instala lo que falte sin preguntar
+v-ia deps --only engram    # solo uno
+v-ia install --dry-run --all   # lo mismo dentro del flujo de instalación
+v-ia install --yes --all       # aplica el diff y luego instala los componentes
+```
+
+| Componente | Si falta, V-IA ejecuta | Requisitos mínimos |
+|---|---|---|
+| **Engram** (`--engram`) | `go install github.com/Gentleman-Programming/engram/v3/cmd/engram@v3.7.2` con `GOBIN=~/.local/bin` (o `brew install gentleman-programming/tap/engram`); luego `engram setup claude-code` | `go` o `brew` |
+| **Context7** (`--context7`) | `claude mcp add --scope user --transport http context7 https://mcp.context7.com/mcp` (MCP remoto, **sin Node**) | `claude` |
+| **CodeGraph** (`--codegraph`) | `npm install -g @colbymchenry/codegraph@1.6.4`, o si no hay npm, su instalador oficial (`curl … \| sh`, descarga y ejecuta un script remoto); luego `codegraph install --yes --target=claude` | `claude` y (`npm` o `curl`) |
+
+- **Qué sí puede fallar:** solo lo que V-IA no puede instalar por ti: no tener `claude`, o no tener ni `go` ni `brew` para Engram. Entonces dice exactamente qué falta, y `--dry-run` aun así lista los pasos.
+- **Orden:** primero los componentes externos y después los archivos de V-IA; si uno falla, no se escribe nada de V-IA y es reintentable. Lo ya instalado no se revierte solo (`claude mcp remove ...`).
+- **Idempotente:** se detecta por el binario y por `mcpServers` de `~/.claude.json` (Engram, Context7 y CodeGraph); si ya está, no se repite.
+- **Versiones y orígenes fijados** (`internal/extras/extras.go`): Engram `v3.7.2`, CodeGraph `1.6.4`. Context7 remoto no tiene versión local, y sin API key tiene límites de uso básicos.
+- **Lo instalado en `~/.local/bin`** debe estar en tu `PATH` para usarlo después.
+- **CodeGraph escribe en `~/.claude/CLAUDE.md`** (su instalador añade instrucciones propias) y requiere `codegraph init -i` en cada proyecto. No toca el bloque ODD gestionado. Si ya usas Serena o graphify para lo mismo, probablemente no necesites los dos.
+- En la TUI son casillas en el paso **Componentes**; la revisión muestra los comandos que se ejecutarán.
+- `v-ia doctor` informa de los tres (detección por binario y `mcpServers`).
+- `sync` y `uninstall` **no** gestionan estos componentes: usan sus propias herramientas (`claude mcp remove ...`).
+
+Verificación: Engram y Context7 se instalaron de verdad en un HOME temporal (`deps --yes`). **CodeGraph no se ejecutó contra su instalador real** (descarga un script remoto); sus comandos salen de su documentación pública.
+
+---|---|---|---|
 | **Engram** (`--engram`) | Memoria entre sesiones | `engram setup claude-code` | `engram` |
 | **Context7** (`--context7`) | Documentación actual de librerías por MCP | `claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp@4.7.3` | `claude`, `npx` (Node 18+) |
 | **CodeGraph** (`--codegraph`) | Grafo de conocimiento del código por MCP | `npm install -g @colbymchenry/codegraph@1.6.4` (si falta) y `codegraph install --yes --target=claude` | `claude`, `npm` |
@@ -458,6 +498,7 @@ No soportados todavía: Cursor, VS Code Copilot, Kiro, Kimi, Antigravity y el re
 | `v-ia install [flags]` | Instala/actualiza bloques, hooks, skills, subagente (ver flags arriba). |
 | `v-ia sync [flags]` | Actualiza solo lo ya instalado. |
 | `v-ia uninstall [flags]` | Retira lo instalado (conserva lo editado a mano). |
+| `v-ia update [--check] [--yes]` | Actualiza el binario desde la última release de GitHub verificando su sha256 (no recompila). |
 | `v-ia upgrade --src DIR` | Recompila desde el repo y reemplaza el binario. |
 | `v-ia restore --list` / `restore latest --yes` | Backups y restauración. |
 | `v-ia doctor` | Diagnóstico de solo lectura. |
@@ -471,6 +512,7 @@ No soportados todavía: Cursor, VS Code Copilot, Kiro, Kimi, Antigravity y el re
 | `v-ia review assess [--base-ref REF]` | Evalúa el riesgo (JSON). |
 | `v-ia review ack --verdict approve\|changes [--reviewer X] [--note "…"]` | Registra el veredicto del revisor. |
 | `v-ia review mode status\|enable\|disable [--scope global\|project]` | Interruptor RDD. |
+| `v-ia deps [--yes] [--only a,b]` | Muestra qué falta (Engram, Context7, CodeGraph) y lo instala si confirmas. Sin sudo. |
 | `v-ia standards init\|check\|install\|off\|status` | Revisión de estándares del proyecto (ver sección). |
 | `v-ia skill-registry list\|refresh` | Índice de skills. |
 | `v-ia hook pre\|prompt\|stop\|session` | **Interno**: lo invocan los hooks; no lo ejecutes a mano. |
@@ -571,6 +613,7 @@ internal/review/     checks, riesgo, recibo, ack, modo ON/OFF
 internal/registry/   índice de skills
 internal/doctor/     diagnóstico
 internal/extras/     Engram, Context7, CodeGraph: planifica y ejecuta sus comandos oficiales
+internal/update/     v-ia update: descarga verificada y reemplazo atómico del binario
 internal/standards/  reglas path/deny/ai, revisión de staging, caché y hook de pre-commit
 internal/tui/        terminal interactiva Bubble Tea (banner, menú, flujos, paneles)
 scripts/             e2e contra Claude Code y OpenCode reales; gen-banner.py (logo)
