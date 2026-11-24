@@ -19,10 +19,11 @@ func cmdUpdate(args []string) int {
 	check := fs.Bool("check", false, "solo comprobar si hay una versión nueva")
 	yes := fs.Bool("yes", false, "actualizar sin preguntar")
 	noAtt := fs.Bool("no-attestation", false, "no verificar la atestación de GitHub (p. ej. releases anteriores a que existieran)")
+	channel := fs.String("channel", os.Getenv("V_IA_CHANNEL"), "stable | beta (también V_IA_CHANNEL)")
 	if fs.Parse(args) != nil {
 		return 2
 	}
-	tag, err := update.Latest()
+	tag, err := update.LatestChannel(*channel)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -58,6 +59,11 @@ func cmdUpdate(args []string) int {
 		return fail("%v", err)
 	}
 	fmt.Println("✓ descarga verificada (sha256)")
+	if update.SignatureConfigured() {
+		fmt.Println("✓ firma minisign de checksums.txt verificada")
+	} else {
+		fmt.Println("! sin clave minisign configurada (V_IA_MINISIGN_PUBKEY o -ldflags): no se verifica la firma de la release")
+	}
 	switch {
 	case *noAtt:
 		fmt.Println("! atestación omitida por --no-attestation: la integridad depende solo del hash de la release")

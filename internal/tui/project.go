@@ -39,8 +39,8 @@ func loadProject(dir, home string) projectInfo {
 			state = "obsoleto o fallido"
 		}
 		ack := ""
-		if r.Review != nil {
-			ack = " · revisor: " + r.Review.Verdict
+		if len(r.SelectedLenses) > 0 {
+			ack = fmt.Sprintf(" · revisión: %s (%d/%d lentes)", review.Status(dir).State, len(r.Reviews), len(r.SelectedLenses))
 		}
 		p.Receipt = fmt.Sprintf("%s · %s · candidato %.10s%s", r.Result, state, r.CandidateID, ack)
 	}

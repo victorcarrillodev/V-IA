@@ -206,3 +206,20 @@ func TestVerifyAttestationUsaGhConElRepoCorrecto(t *testing.T) {
 		t.Fatalf("debía propagar el fallo: %v", err)
 	}
 }
+
+func TestLatestChannelBetaIncluyePrereleases(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/"+Repo+"/releases", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"tag_name":"v0.5.0-rc1"},{"tag_name":"v0.9.0","draft":true},{"tag_name":"v0.4.0"},{"tag_name":"basura"}]`))
+	})
+	srv := httptest.NewServer(mux)
+	oa := APIBase
+	APIBase = srv.URL
+	t.Cleanup(func() { srv.Close(); APIBase = oa })
+	if tag, err := LatestChannel("beta"); err != nil || tag != "v0.5.0-rc1" {
+		t.Fatalf("tag=%q err=%v", tag, err)
+	}
+	if _, err := LatestChannel("raro"); err == nil {
+		t.Fatal("canal desconocido debía fallar")
+	}
+}

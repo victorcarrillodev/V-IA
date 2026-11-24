@@ -230,3 +230,74 @@ func Status(root string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// EvidenceCommands devuelve, por tarea [x], el comando que declara su fila de Evidencia.
+func EvidenceCommands(content string) map[string]string {
+	lines := strings.Split(content, "\n")
+	out := map[string]string{}
+	f, t := section(lines, "Evidencia")
+	if f < 0 {
+		return out
+	}
+	for _, l := range lines[f:t] {
+		if !strings.HasPrefix(strings.TrimSpace(l), "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(strings.TrimSpace(l), "|"), "|")
+		if len(cells) < 3 {
+			continue
+		}
+		if id := idRe.FindString(cells[0]); id != "" {
+			out[id] = strings.TrimSpace(strings.ReplaceAll(cells[1], "`", ""))
+		}
+	}
+	return out
+}
+
+// Verify contrasta la evidencia de cada tarea [x] con los comandos que el recibo vigente
+// ejecutó de verdad y pasaron (ran). Una tarea cuya evidencia no cita ninguno de ellos
+// queda "sin respaldo": no es un error de forma, pero tampoco está demostrada por V-IA.
+// Devuelve las tareas respaldadas y las que no.
+func Verify(content string, ran []string) (backed, unbacked []string) {
+	lines := strings.Split(content, "\n")
+	f, t := section(lines, "Tareas")
+	if f < 0 {
+		return nil, nil
+	}
+	ev := EvidenceCommands(content)
+	for _, l := range lines[f:t] {
+		m := checkedRe.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		id := idRe.FindString(m[1])
+		if id == "" {
+			continue
+		}
+		ok := false
+		for _, c := range ran {
+			if n := normCmd(c); n != "" && strings.Contains(normCmd(ev[id]), n) {
+				ok = true
+				break
+			}
+		}
+		if ok {
+			backed = append(backed, id)
+		} else {
+			unbacked = append(unbacked, id)
+		}
+	}
+	return
+}
+
+// normCmd deja un comando sin banderas (-count=1, -race, -q…) y con espacios simples, para
+// que "go test -count=1 ./..." respalde a "go test ./...".
+func normCmd(s string) string {
+	var out []string
+	for _, f := range strings.Fields(s) {
+		if !strings.HasPrefix(f, "-") {
+			out = append(out, f)
+		}
+	}
+	return strings.Join(out, " ")
+}

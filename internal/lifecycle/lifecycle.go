@@ -3,6 +3,7 @@
 package lifecycle
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -22,9 +23,11 @@ type Options struct {
 	Force       bool
 	Hooks       bool
 	Permissions bool
+	NoSkills    bool // no instalar la biblioteca de skills (preset minimal)
+	Persona     string
 }
 
-var skillNames = []string{"odd-resume", "odd-verify", "odd-delegate", "rdd-review", "work-unit-commits", "branch-pr", "issue-creation", "chained-pr", "judgment-day", "skill-creator", "comment-writer", "rdd-defect-workflow"}
+var skillNames = []string{"odd-resume", "odd-verify", "odd-delegate", "rdd-review", "work-unit-commits", "branch-pr", "issue-creation", "chained-pr", "judgment-day", "skill-creator", "comment-writer", "rdd-defect-workflow", "go-testing", "skill-improver", "systemic-issue-triage", "cognitive-doc-design", "skill-registry", "issue-root-resolution"}
 
 // ExeForHooks devuelve la ruta con la que los hooks llamarán a v-ia.
 func ExeForHooks() string {
@@ -51,23 +54,82 @@ func read(path string) (string, bool, error) {
 	return string(b), err == nil, err
 }
 
-type managedFile struct{ path, content string }
+type managedFile struct {
+	path, content string
+	js            bool // la marca de gestión es un comentario JS
+}
 
-// files son los archivos completos que V-IA gestiona para Claude Code.
-func files(home string) ([]managedFile, error) {
+// files son los archivos completos que V-IA gestiona: la biblioteca de skills en cada agente
+// que las admite, el subagente revisor (Claude Code) y el plugin de bloqueo (OpenCode).
+func files(o Options) ([]managedFile, error) {
 	var out []managedFile
-	for _, n := range skillNames {
-		b, err := corefs.FS.ReadFile("skills/" + n + "/SKILL.md")
+	for _, name := range o.Agents {
+		a, ok := adapters.Find(name)
+		if !ok || a.SkillsDir == nil {
+			continue
+		}
+		if !o.NoSkills {
+			for _, n := range skillNames {
+				b, err := corefs.FS.ReadFile("skills/" + n + "/SKILL.md")
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, managedFile{path: filepath.Join(a.SkillsDir(o.Home), n, "SKILL.md"), content: string(b)})
+			}
+		}
+		if a.OwnFile != nil {
+			path, fm := a.OwnFile(o.Home)
+			b, err := adapters.ODDBlock(a.Hooks)
+			if err != nil {
+				return nil, err
+			}
+			content := fm + b.Content
+			if pb, ok := adapters.PersonaBlock(o.Persona); ok {
+				content += "\n" + pb.Content
+			}
+			out = append(out, managedFile{path: path, content: content})
+		}
+		af, err := agentFiles(o, a)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, managedFile{filepath.Join(home, ".claude", "skills", n, "SKILL.md"), string(b)})
+		out = append(out, af...)
+		switch name {
+		case "opencode":
+			if o.Hooks {
+				f, err := opencodePlugin(o)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, f)
+			}
+		}
 	}
-	b, err := corefs.FS.ReadFile("agents/v-ia-reviewer.md")
+	return dedupe(out), nil
+}
+
+// dedupe quita archivos repetidos (dos agentes pueden compartir la carpeta de skills).
+func dedupe(in []managedFile) []managedFile {
+	seen := map[string]bool{}
+	var out []managedFile
+	for _, f := range in {
+		if !seen[f.path] {
+			seen[f.path] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// opencodePlugin renderiza el plugin que conecta OpenCode con `v-ia hook`.
+func opencodePlugin(o Options) (managedFile, error) {
+	b, err := corefs.FS.ReadFile("plugins/opencode-v-ia.js")
 	if err != nil {
-		return nil, err
+		return managedFile{}, err
 	}
-	return append(out, managedFile{filepath.Join(home, ".claude", "agents", "v-ia-reviewer.md"), string(b)}), nil
+	exe, _ := json.Marshal(o.Exe)
+	body := strings.ReplaceAll(string(b), "__V_IA_EXE__", string(exe))
+	return managedFile{path: filepath.Join(adapters.XDGConfig(o.Home), "opencode", "plugins", "v-ia.js"), content: body, js: true}, nil
 }
 
 func fileAction(f managedFile, force bool) (core.Action, error) {
@@ -75,7 +137,11 @@ func fileAction(f managedFile, force bool) (core.Action, error) {
 	if err != nil {
 		return core.Action{}, err
 	}
-	nw, st := core.UpsertFile(old, exists, f.content, force)
+	up := core.UpsertFile
+	if f.js {
+		up = core.UpsertFileJS
+	}
+	nw, st := up(old, exists, f.content, force)
 	return core.Action{Path: f.path, Status: st, Existed: exists, Old: old, New: nw}, nil
 }
 
@@ -99,6 +165,27 @@ func settingsAction(o Options) (core.Action, error) {
 	return core.Action{Path: p, Status: st, Existed: exists, Old: old, New: nw}, nil
 }
 
+// hookAction planifica la fusión de los hooks de V-IA en la configuración de otro agente.
+func hookAction(o Options, agent string) (core.Action, error) {
+	p := adapters.HookConfigPath(o.Home, agent)
+	old, exists, err := read(p)
+	if err != nil {
+		return core.Action{}, err
+	}
+	nw, err := settings.HooksMerge(old, o.Exe, settings.Specs[agent])
+	if err != nil {
+		return core.Action{}, err
+	}
+	st := core.Update
+	switch {
+	case !exists:
+		st = core.Create
+	case nw == old:
+		st = core.Unchanged
+	}
+	return core.Action{Path: p, Status: st, Existed: exists, Old: old, New: nw}, nil
+}
+
 // Install planifica bloques de instrucciones, y para Claude Code además hooks, deny-list,
 // skills y el subagente revisor.
 func Install(o Options) (core.Plan, error) {
@@ -109,29 +196,43 @@ func Install(o Options) (core.Plan, error) {
 	if err != nil {
 		return core.Plan{}, err
 	}
+	if pb, ok := adapters.PersonaBlock(o.Persona); ok {
+		for _, t := range ts {
+			ts = append(ts, core.Target{Path: t.Path, Block: pb})
+		}
+	}
 	p, err := core.BuildPlan(ts, o.Force)
 	if err != nil {
 		return core.Plan{}, err
 	}
-	if has(o.Agents, "claude-code") {
-		if o.Hooks || o.Permissions {
-			a, err := settingsAction(o)
-			if err != nil {
-				return core.Plan{}, err
-			}
-			p.Actions = append(p.Actions, a)
-		}
-		fs, err := files(o.Home)
+	if has(o.Agents, "claude-code") && (o.Hooks || o.Permissions) {
+		a, err := settingsAction(o)
 		if err != nil {
 			return core.Plan{}, err
 		}
-		for _, f := range fs {
-			a, err := fileAction(f, o.Force)
+		p.Actions = append(p.Actions, a)
+	}
+	for _, name := range o.Agents {
+		if _, ok := settings.Specs[name]; ok && o.Hooks {
+			a, err := hookAction(o, name)
 			if err != nil {
-				return core.Plan{}, err
+				// una configuración ajena rota no debe impedir instalar el resto
+				p.Warnings = append(p.Warnings, name+": hooks omitidos: "+err.Error())
+				continue
 			}
 			p.Actions = append(p.Actions, a)
 		}
+	}
+	fs, err := files(o)
+	if err != nil {
+		return core.Plan{}, err
+	}
+	for _, f := range fs {
+		a, err := fileAction(f, o.Force)
+		if err != nil {
+			return core.Plan{}, err
+		}
+		p.Actions = append(p.Actions, a)
 	}
 	return p, nil
 }
@@ -148,6 +249,8 @@ func Sync(o Options) (core.Plan, error) {
 		case a.Status == core.Create || a.Status == core.Add:
 			continue // no estaba instalado
 		case a.Path == adapters.SettingsPath(o.Home) && !settings.Installed(a.Old):
+			continue
+		case isAgentHookFile(o, a.Path) && !settings.HooksInstalled(a.Old):
 			continue
 		}
 		p.Actions = append(p.Actions, a)
@@ -171,7 +274,9 @@ func Uninstall(o Options) (core.Plan, error) {
 		if !exists {
 			continue
 		}
-		nw, removed := core.Remove(old, t.Block.ID)
+		stripped, hadPersona := core.Remove(old, "persona") // la persona es opcional: se retira siempre
+		nw, removed := core.Remove(stripped, t.Block.ID)
+		removed = removed || hadPersona
 		switch {
 		case !removed:
 			p.Actions = append(p.Actions, core.Action{Path: t.Path, Status: core.Unchanged, Existed: true, Old: old, New: old})
@@ -181,20 +286,35 @@ func Uninstall(o Options) (core.Plan, error) {
 			p.Actions = append(p.Actions, core.Action{Path: t.Path, Status: core.Update, Existed: true, Old: old, New: nw})
 		}
 	}
-	if !has(o.Agents, "claude-code") {
-		return p, nil
-	}
-	sp := adapters.SettingsPath(o.Home)
-	if old, exists, err := read(sp); err != nil {
-		return p, err
-	} else if exists && settings.Installed(old) {
-		nw, err := settings.Strip(old)
-		if err != nil {
+	if has(o.Agents, "claude-code") {
+		sp := adapters.SettingsPath(o.Home)
+		if old, exists, err := read(sp); err != nil {
 			return p, err
+		} else if exists && settings.Installed(old) {
+			nw, err := settings.Strip(old)
+			if err != nil {
+				return p, err
+			}
+			p.Actions = append(p.Actions, core.Action{Path: sp, Status: core.Update, Existed: true, Old: old, New: nw})
 		}
-		p.Actions = append(p.Actions, core.Action{Path: sp, Status: core.Update, Existed: true, Old: old, New: nw})
 	}
-	fs, err := files(o.Home)
+	for _, name := range o.Agents {
+		if _, ok := settings.Specs[name]; !ok {
+			continue
+		}
+		gp := adapters.HookConfigPath(o.Home, name)
+		if old, exists, err := read(gp); err != nil {
+			return p, err
+		} else if exists && settings.HooksInstalled(old) {
+			nw, err := settings.HooksStrip(old)
+			if err != nil {
+				return p, err
+			}
+			p.Actions = append(p.Actions, core.Action{Path: gp, Status: core.Update, Existed: true, Old: old, New: nw})
+		}
+	}
+	o.Hooks = true // al desinstalar se retira también el plugin, estuviera o no pedido el hook
+	fs, err := files(o)
 	if err != nil {
 		return p, err
 	}
@@ -208,4 +328,13 @@ func Uninstall(o Options) (core.Plan, error) {
 		}
 	}
 	return p, nil
+}
+
+func isAgentHookFile(o Options, path string) bool {
+	for name := range settings.Specs {
+		if path == adapters.HookConfigPath(o.Home, name) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,5 +1,6 @@
-// Package review ejecuta las comprobaciones del proyecto y emite un recibo
-// ligado al contenido exacto del árbol (candidate_id).
+// Package review ejecuta las comprobaciones del proyecto y emite un recibo ligado al cambio exacto
+// (dos árboles git congelados). La revisión independiente es por lente (4R), con veredicto que
+// calcula el código —no el revisor—, una sola corrección acotada y escalado a decisión humana.
 package review
 
 import (
@@ -7,13 +8,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
-
-	"v-ia/internal/guard"
 )
 
 type Check struct {
@@ -22,22 +24,87 @@ type Check struct {
 	Output string `json:"output_tail"`
 }
 
-// Ack es el veredicto de un revisor independiente, ligado al candidato exacto.
-type Ack struct {
-	CandidateID string `json:"candidate_id"`
-	Verdict     string `json:"verdict"` // approve | changes
-	Reviewer    string `json:"reviewer"`
-	Note        string `json:"note,omitempty"`
-	At          string `json:"at"`
+// Estados del recibo.
+const (
+	StateFailed             = "failed"              // alguna comprobación falló
+	StateStale              = "stale"               // el árbol cambió mientras corrían las comprobaciones
+	StateReady              = "ready"               // pasó y no exige revisión
+	StateChecking           = "checking"            // pasó y faltan revisiones de lente
+	StateCorrectionRequired = "correction_required" // un revisor encontró un bloqueante causado por el cambio
+	StateApproved           = "approved"            // todas las lentes aprobaron
+	StateEscalated          = "escalated"           // la única corrección no bastó: decide una persona
+)
+
+// Estados públicos (vocabulario del orquestador).
+const (
+	PublicWorking       = "working"
+	PublicChecking      = "checking"
+	PublicReady         = "ready"
+	PublicNeedsDecision = "needs_decision"
+)
+
+// Finding es un hallazgo de un revisor. Solo bloquean BLOCKER/CRITICAL causados por el cambio.
+type Finding struct {
+	Location          string   `json:"location"`
+	Severity          string   `json:"severity"` // BLOCKER | CRITICAL | WARNING | SUGGESTION
+	Claim             string   `json:"claim"`
+	EvidenceClass     string   `json:"evidence_class,omitempty"`
+	CausalDisposition string   `json:"causal_disposition,omitempty"` // introduced | behavior-activated | worsened | pre-existing | base-only | unknown
+	ProofRefs         []string `json:"proof_refs,omitempty"`
+}
+
+// Inspection declara qué miró el revisor: debe cubrir todo el manifiesto de rutas.
+type Inspection struct {
+	Status string   `json:"status"` // complete
+	Paths  []string `json:"paths"`
+}
+
+// ReviewInput es lo que entrega un revisor de una lente (JSON estricto).
+type ReviewInput struct {
+	CandidateID string     `json:"candidate_id"`
+	Lens        string     `json:"lens"`
+	Reviewer    string     `json:"reviewer"`
+	Inspection  Inspection `json:"inspection"`
+	Findings    []Finding  `json:"findings"`
+	Evidence    []string   `json:"evidence"`
+}
+
+// LensReview es una revisión admitida; el veredicto lo calcula V-IA.
+type LensReview struct {
+	Lens      string    `json:"lens"`
+	Reviewer  string    `json:"reviewer"`
+	Inspected int       `json:"inspected_paths"`
+	Findings  []Finding `json:"findings"`
+	Evidence  []string  `json:"evidence"`
+	Verdict   string    `json:"verdict"` // approve | changes
+	At        string    `json:"at"`
 }
 
 type Receipt struct {
-	CandidateID string     `json:"candidate_id"`
-	Created     string     `json:"created"`
-	Result      string     `json:"result"` // pass | fail
-	Checks      []Check    `json:"checks"`
-	Risk        Assessment `json:"risk"`
-	Review      *Ack       `json:"review,omitempty"`
+	CandidateID   string     `json:"candidate_id"`
+	BaseTree      string     `json:"base_tree,omitempty"`
+	CandidateTree string     `json:"candidate_tree,omitempty"`
+	Paths         []string   `json:"paths,omitempty"`
+	Created       string     `json:"created"`
+	Result        string     `json:"result"` // pass | fail | stale
+	Checks        []Check    `json:"checks"`
+	Risk          Assessment `json:"risk"`
+	// Congelado al emitir el recibo: ni el agente ni un revisor lo reescriben después.
+	SelectedLenses []string     `json:"selected_lenses,omitempty"`
+	LensReason     string       `json:"lens_selection_reason,omitempty"`
+	Reviews        []LensReview `json:"reviews,omitempty"`
+	Attempt        int          `json:"attempt"` // 1 = revisión inicial; 2 = tras la única corrección
+	State          string       `json:"state"`
+}
+
+// RunOptions son las elecciones del agente que se congelan en el recibo.
+type RunOptions struct {
+	Base       string
+	Lenses     []string
+	LensReason string
+	EscItem    int
+	EscReason  string
+	Timeout    time.Duration
 }
 
 func receiptPath(root string) string { return filepath.Join(root, ".v-ia", "receipt.json") }
@@ -72,16 +139,28 @@ func tail(s string, n int) string {
 	return s
 }
 
-// Run ejecuta las comprobaciones y guarda el recibo. Sin comprobaciones => error:
-// un recibo vacío no demuestra nada.
-func Run(root string, cmds []string, timeout time.Duration) (Receipt, error) {
+// Run ejecuta las comprobaciones y guarda el recibo. Sin comprobaciones => error: un recibo vacío
+// no demuestra nada. El candidato se congela antes y se vuelve a medir después: si cambió, el
+// recibo es "stale" y no vale.
+func Run(root string, cmds []string, o RunOptions) (Receipt, error) {
 	if len(cmds) == 0 {
 		return Receipt{}, errors.New("no hay comprobaciones: añade comandos en .v-ia/checks.txt (uno por línea)")
 	}
-	r := Receipt{Result: "pass"}
+	if o.Timeout == 0 {
+		o.Timeout = 10 * time.Minute
+	}
+	prev, prevErr := load(root)
+	if prevErr == nil && prev.State == StateEscalated {
+		return Receipt{}, errors.New("la revisión anterior quedó ESCALADA (la única corrección no bastó): decide cómo seguir y ejecuta 'v-ia review reset'")
+	}
+	cand, cerr := TakeCandidate(root, o.Base)
+	r := Receipt{Result: "pass", Attempt: 1}
+	if prevErr == nil && prev.State == StateCorrectionRequired {
+		r.Attempt = prev.Attempt + 1 // esta es la corrección acotada
+	}
 	for _, c := range cmds {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		cmd := exec.CommandContext(ctx, "sh", "-c", c)
+		ctx, cancel := context.WithTimeout(context.Background(), o.Timeout)
+		cmd := shellCommand(ctx, c)
 		cmd.Dir = root
 		out, err := cmd.CombinedOutput()
 		cancel()
@@ -96,14 +175,46 @@ func Run(root string, cmds []string, timeout time.Duration) (Receipt, error) {
 		}
 		r.Checks = append(r.Checks, ck)
 	}
-	snap, err := guard.Take(root)
+	if cerr == nil {
+		after, err := TakeCandidate(root, o.Base)
+		if err != nil || after.ID != cand.ID {
+			r.Result = "stale"
+		}
+		r.CandidateID, r.BaseTree, r.CandidateTree, r.Paths = cand.ID, cand.BaseTree, cand.CandidateTree, cand.Paths
+		r.Risk = AssessCandidate(root, cand)
+	} else {
+		id, err := currentID(root, o.Base)
+		if err != nil {
+			return r, err
+		}
+		r.CandidateID = id
+		r.Risk = unknown("no se pudo congelar el candidato: " + cerr.Error())
+	}
+	if o.EscItem != 0 || o.EscReason != "" {
+		if err := r.Risk.Escalate(o.EscItem, o.EscReason); err != nil {
+			return r, err
+		}
+	}
+	lenses, err := SelectLenses(r.Risk.Tier, o.Lenses, o.LensReason)
 	if err != nil {
 		return r, err
 	}
-	r.CandidateID = guard.ID(snap)
-	r.Risk = Assess(root, "")
+	r.SelectedLenses, r.LensReason = lenses, o.LensReason
 	r.Created = time.Now().UTC().Format(time.RFC3339)
+	r.State = initialState(r)
 	return r, save(root, r)
+}
+
+func initialState(r Receipt) string {
+	switch {
+	case r.Result == "fail":
+		return StateFailed
+	case r.Result == "stale":
+		return StateStale
+	case r.Risk.ReviewDue && len(r.SelectedLenses) > 0:
+		return StateChecking
+	}
+	return StateReady
 }
 
 func save(root string, r Receipt) error {
@@ -111,7 +222,11 @@ func save(root string, r Receipt) error {
 	if err := os.MkdirAll(filepath.Dir(receiptPath(root)), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(receiptPath(root), b, 0o644)
+	tmp := receiptPath(root) + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, receiptPath(root)) // atómico: nadie lee un recibo a medias
 }
 
 func load(root string) (Receipt, error) {
@@ -123,53 +238,239 @@ func load(root string) (Receipt, error) {
 	return r, json.Unmarshal(raw, &r)
 }
 
-// RecordAck guarda el veredicto del revisor si el árbol sigue siendo el candidato del recibo.
-func RecordAck(root, verdict, reviewer, note string) error {
-	if verdict != "approve" && verdict != "changes" {
-		return errors.New("veredicto inválido: approve | changes")
-	}
-	r, err := load(root)
-	if err != nil {
+// Load devuelve el último recibo guardado (para mostrarlo; no lo valida).
+func Load(root string) (Receipt, error) { return load(root) }
+
+// Reset descarta un recibo (típicamente escalado) para empezar un linaje nuevo: decisión humana.
+func Reset(root string) error {
+	if err := os.Remove(receiptPath(root)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	snap, err := guard.Take(root)
-	if err != nil {
-		return err
-	}
-	if guard.ID(snap) != r.CandidateID {
-		return errors.New("el árbol cambió desde 'review check': vuelve a ejecutarlo antes de revisar")
-	}
-	r.Review = &Ack{CandidateID: r.CandidateID, Verdict: verdict, Reviewer: reviewer, Note: note, At: time.Now().UTC().Format(time.RFC3339)}
-	return save(root, r)
+	return nil
 }
 
-// Verify confirma que hay un recibo pass para el árbol actual. Con requireAck
-// (riesgo alto y RDD activo) exige además el visto bueno de un revisor sobre ese mismo candidato.
-func Verify(root string, requireAck bool) error {
-	r, err := load(root)
-	if err != nil {
-		return err
+var severe = map[string]bool{"BLOCKER": true, "CRITICAL": true}
+var causal = map[string]bool{"introduced": true, "behavior-activated": true, "worsened": true}
+var nonCausal = map[string]bool{"pre-existing": true, "base-only": true, "unknown": true}
+
+func isBlocking(f Finding) bool { return severe[f.Severity] && causal[f.CausalDisposition] }
+
+func validate(in ReviewInput, r Receipt) error {
+	if strings.TrimSpace(in.Reviewer) == "" {
+		return errors.New("falta 'reviewer'")
 	}
-	if r.Result != "pass" {
-		return errors.New("el último recibo es fail")
+	has := false
+	for _, l := range r.SelectedLenses {
+		has = has || l == in.Lens
 	}
-	snap, err := guard.Take(root)
-	if err != nil {
-		return err
+	if !has {
+		return fmt.Errorf("la lente %q no está entre las seleccionadas para este recibo: %s", in.Lens, strings.Join(r.SelectedLenses, ", "))
 	}
-	if guard.ID(snap) != r.CandidateID {
-		return errors.New("el recibo es de otra versión: el árbol cambió desde la revisión")
+	if in.Inspection.Status != "complete" {
+		return errors.New("inspection.status debe ser \"complete\": la revisión tiene que cubrir todo el cambio")
 	}
-	if requireAck && r.Risk.ReviewDue {
-		if r.Review == nil || r.Review.CandidateID != r.CandidateID {
-			return errors.New("riesgo ALTO: falta la revisión independiente (subagente v-ia-reviewer → v-ia review ack)")
+	seen := map[string]bool{}
+	for _, p := range in.Inspection.Paths {
+		seen[p] = true
+	}
+	var missing []string
+	for _, p := range r.Paths {
+		if !seen[p] {
+			missing = append(missing, p)
 		}
-		if r.Review.Verdict != "approve" {
-			return errors.New("el revisor pidió cambios: " + r.Review.Note)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("inspection.paths no cubre el manifiesto; faltan %d ruta(s): %s", len(missing), strings.Join(firstN(missing, 5), ", "))
+	}
+	for i, f := range in.Findings {
+		if strings.TrimSpace(f.Location) == "" || strings.TrimSpace(f.Claim) == "" {
+			return fmt.Errorf("hallazgo %d: location y claim son obligatorios", i+1)
+		}
+		switch f.Severity {
+		case "BLOCKER", "CRITICAL", "WARNING", "SUGGESTION":
+		default:
+			return fmt.Errorf("hallazgo %d: severity inválida %q", i+1, f.Severity)
+		}
+		if severe[f.Severity] {
+			if !causal[f.CausalDisposition] && !nonCausal[f.CausalDisposition] {
+				return fmt.Errorf("hallazgo %d: un severo exige causal_disposition (introduced | behavior-activated | worsened | pre-existing | base-only | unknown)", i+1)
+			}
+			if causal[f.CausalDisposition] && len(f.ProofRefs) == 0 {
+				return fmt.Errorf("hallazgo %d: un severo causado por el cambio exige proof_refs (prueba reproducible)", i+1)
+			}
 		}
 	}
 	return nil
 }
 
-// Load devuelve el último recibo guardado (para mostrarlo; no lo valida).
-func Load(root string) (Receipt, error) { return load(root) }
+func firstN(s []string, n int) []string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// RecordReview admite la revisión de una lente. El veredicto lo calcula V-IA: "changes" si hay
+// algún severo causado por el cambio con prueba; si no, "approve". Devuelve el recibo actualizado.
+func RecordReview(root string, in ReviewInput) (Receipt, error) {
+	r, err := load(root)
+	if err != nil {
+		return r, err
+	}
+	if r.Result != "pass" {
+		return r, errors.New("el recibo no es 'pass': no se puede revisar un cambio que no pasa sus comprobaciones")
+	}
+	if !r.Risk.ReviewDue {
+		return r, errors.New("este cambio no exige revisión independiente (riesgo " + r.Risk.Tier + ")")
+	}
+	if r.State == StateEscalated || r.State == StateApproved {
+		return r, fmt.Errorf("el recibo ya está %s: no admite más revisiones", r.State)
+	}
+	cur, err := currentID(root, "")
+	if err != nil {
+		return r, err
+	}
+	if cur != r.CandidateID || in.CandidateID != r.CandidateID {
+		return r, errors.New("el árbol cambió (o candidate_id no coincide) desde 'review check': vuelve a ejecutarlo antes de revisar")
+	}
+	if err := validate(in, r); err != nil {
+		return r, err
+	}
+	lr := LensReview{Lens: in.Lens, Reviewer: in.Reviewer, Inspected: len(in.Inspection.Paths), Findings: in.Findings,
+		Evidence: in.Evidence, Verdict: "approve", At: time.Now().UTC().Format(time.RFC3339)}
+	for _, f := range in.Findings {
+		if isBlocking(f) {
+			lr.Verdict = "changes"
+		}
+	}
+	var keep []LensReview
+	for _, x := range r.Reviews {
+		if x.Lens != in.Lens {
+			keep = append(keep, x)
+		}
+	}
+	r.Reviews = append(keep, lr)
+	sort.Slice(r.Reviews, func(i, j int) bool { return r.Reviews[i].Lens < r.Reviews[j].Lens })
+	r.State = reviewState(r)
+	return r, save(root, r)
+}
+
+func reviewState(r Receipt) string {
+	done := map[string]bool{}
+	changes := false
+	for _, x := range r.Reviews {
+		done[x.Lens] = true
+		changes = changes || x.Verdict == "changes"
+	}
+	for _, l := range r.SelectedLenses {
+		if !done[l] {
+			return StateChecking
+		}
+	}
+	switch {
+	case !changes:
+		return StateApproved
+	case r.Attempt >= 2:
+		return StateEscalated // la única corrección acotada ya se usó
+	}
+	return StateCorrectionRequired
+}
+
+// Pending devuelve las lentes que aún no tienen revisión.
+func (r Receipt) Pending() []string {
+	done := map[string]bool{}
+	for _, x := range r.Reviews {
+		done[x.Lens] = true
+	}
+	var out []string
+	for _, l := range r.SelectedLenses {
+		if !done[l] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// Verify confirma que hay un recibo pass para el árbol actual. Con requireAck (RDD activo) y revisión
+// debida, exige además que todas las lentes seleccionadas hayan aprobado ese mismo candidato.
+func Verify(root string, requireAck bool) error {
+	r, err := load(root)
+	if err != nil {
+		return err
+	}
+	if r.Result == "stale" {
+		return errors.New("el recibo es 'stale': el árbol cambió mientras corrían las comprobaciones; vuelve a ejecutar 'v-ia review check'")
+	}
+	if r.Result != "pass" {
+		return errors.New("el último recibo es fail")
+	}
+	cur, err := currentID(root, "")
+	if err != nil {
+		return err
+	}
+	if cur != r.CandidateID {
+		return errors.New("el recibo es de otra versión: el árbol cambió desde la revisión")
+	}
+	if requireAck && r.Risk.ReviewDue {
+		switch r.State {
+		case StateApproved:
+		case StateChecking:
+			return fmt.Errorf("riesgo %s: faltan las revisiones independientes de: %s (subagente v-ia-reviewer → v-ia review ack)", strings.ToUpper(r.Risk.Tier), strings.Join(r.Pending(), ", "))
+		case StateCorrectionRequired:
+			return errors.New("un revisor encontró un bloqueante causado por el cambio: aplica la única corrección acotada y vuelve a ejecutar 'v-ia review check'")
+		case StateEscalated:
+			return errors.New("revisión ESCALADA: la única corrección no bastó; decide tú cómo seguir ('v-ia review reset')")
+		default:
+			return fmt.Errorf("estado de revisión no válido para entregar: %s", r.State)
+		}
+	}
+	return nil
+}
+
+// StatusInfo resume el estado para el orquestador (sin inferir nada de prosa).
+type StatusInfo struct {
+	State          string   `json:"state"`  // working | checking | ready | needs_decision
+	Detail         string   `json:"detail"` // estado interno del recibo
+	NextTransition string   `json:"next_transition"`
+	Pending        []string `json:"pending_lenses,omitempty"`
+	Attempt        int      `json:"attempt,omitempty"`
+	Tier           string   `json:"tier,omitempty"`
+	Due            bool     `json:"review_due"`
+	Paths          []string `json:"paths,omitempty"`
+	CandidateID    string   `json:"candidate_id,omitempty"`
+}
+
+// Status clasifica el recibo actual contra el árbol vivo.
+func Status(root string) StatusInfo {
+	r, err := load(root)
+	if err != nil {
+		return StatusInfo{State: PublicWorking, Detail: "sin_recibo", NextTransition: "run: v-ia review check"}
+	}
+	s := StatusInfo{Detail: r.State, Attempt: r.Attempt, Tier: r.Risk.Tier, Due: r.Risk.ReviewDue, Paths: r.Paths, CandidateID: r.CandidateID}
+	if cur, err := currentID(root, ""); err != nil || cur != r.CandidateID {
+		s.State, s.Detail, s.NextTransition = PublicWorking, "candidato_cambiado", "run: v-ia review check"
+		return s
+	}
+	switch r.State {
+	case StateFailed, StateStale:
+		s.State, s.NextTransition = PublicWorking, "fix: corrige y ejecuta v-ia review check"
+	case StateChecking:
+		s.State, s.Pending = PublicChecking, r.Pending()
+		s.NextTransition = "collect: revisión independiente de las lentes " + strings.Join(s.Pending, ", ") + " (v-ia review ack)"
+	case StateCorrectionRequired:
+		s.State, s.NextTransition = PublicWorking, "fix: una única corrección acotada y luego v-ia review check"
+	case StateEscalated:
+		s.State, s.NextTransition = PublicNeedsDecision, "stop: decide el usuario (v-ia review reset)"
+	default: // ready | approved
+		s.State, s.NextTransition = PublicReady, "none"
+	}
+	return s
+}
+
+// shellCommand ejecuta c con la shell del sistema: sh en Unix, cmd en Windows.
+func shellCommand(ctx context.Context, c string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(ctx, "cmd", "/C", c)
+	}
+	return exec.CommandContext(ctx, "sh", "-c", c)
+}

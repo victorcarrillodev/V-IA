@@ -43,20 +43,33 @@ type Step struct {
 	Name string
 	Args []string
 	Env  []string // variables extra (KEY=valor)
+	// Fn, si existe, se ejecuta en lugar del comando (escritura de configuración en Go).
+	Fn func() error
 }
 
-func (s Step) String() string { return strings.TrimSpace(s.Name + " " + strings.Join(s.Args, " ")) }
+func (s Step) String() string {
+	if s.Fn != nil && s.Name == "" {
+		return "(escritura de configuración)"
+	}
+	return strings.TrimSpace(s.Name + " " + strings.Join(s.Args, " "))
+}
 
 // Sustituibles en pruebas.
 var (
 	LookPath = exec.LookPath
 	Exec     = func(s Step, out io.Writer) error {
+		if s.Fn != nil {
+			return s.Fn()
+		}
 		c := exec.Command(s.Name, s.Args...)
 		c.Env = append(os.Environ(), s.Env...)
 		c.Stdout, c.Stderr = out, out
 		return c.Run()
 	}
 )
+
+// ocPresent indica si OpenCode está instalado: entonces los MCP también se registran allí.
+func ocPresent() bool { return have("opencode") }
 
 func have(bin string) bool { _, err := LookPath(bin); return err == nil }
 
@@ -97,9 +110,9 @@ func registered(home, name string) bool {
 func Installed(home, id string) bool {
 	switch id {
 	case Engram:
-		return have("engram") && registered(home, "engram")
+		return have("engram") && registered(home, "engram") && (!ocPresent() || openCodeHas(home, "engram"))
 	case Context7:
-		return registered(home, "context7")
+		return (!have("claude") || registered(home, "context7")) && (!ocPresent() || openCodeHas(home, "context7")) && (have("claude") || ocPresent())
 	case CodeGraph:
 		return have("codegraph") && registered(home, "codegraph")
 	}
@@ -139,32 +152,44 @@ func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
 			if !have("engram") {
 				switch {
 				case have("go"):
-					steps = append(steps, Step{"instalar Engram con go install (en ~/.local/bin)", "go", []string{"install", EngramPkg}, []string{"GOBIN=" + binDir()}})
+					steps = append(steps, Step{"instalar Engram con go install (en ~/.local/bin)", "go", []string{"install", EngramPkg}, []string{"GOBIN=" + binDir()}, nil})
 				case have("brew"):
-					steps = append(steps, Step{"instalar Engram con Homebrew", "brew", []string{"install", EngramBrew}, nil})
+					steps = append(steps, Step{"instalar Engram con Homebrew", "brew", []string{"install", EngramBrew}, nil, nil})
 				default:
 					missing = append(missing, "engram no está y no hay 'go' ni 'brew' para instalarlo (binarios: https://github.com/Gentleman-Programming/engram/releases)")
 				}
 			}
-			steps = append(steps, Step{"configurar Engram para Claude Code", "engram", []string{"setup", "claude-code"}, nil})
+			if !registered(home, "engram") {
+				steps = append(steps, Step{Desc: "configurar Engram para Claude Code", Name: "engram", Args: []string{"setup", "claude-code"}})
+			}
+			if ocPresent() && !openCodeHas(home, "engram") {
+				steps = append(steps, Step{Desc: "configurar Engram para OpenCode", Name: "engram", Args: []string{"setup", "opencode"}})
+			}
 		case Context7:
-			need(id, "claude")
-			steps = append(steps, Step{"registrar Context7 (MCP remoto, alcance de usuario)", "claude",
-				[]string{"mcp", "add", "--scope", "user", "--transport", "http", "context7", Context7URL}, nil})
+			if !have("claude") && !ocPresent() {
+				need(id, "claude")
+			}
+			if (have("claude") || !ocPresent()) && !registered(home, "context7") {
+				steps = append(steps, Step{Desc: "registrar Context7 en Claude Code (MCP remoto, alcance de usuario)", Name: "claude",
+					Args: []string{"mcp", "add", "--scope", "user", "--transport", "http", "context7", Context7URL}})
+			}
+			if ocPresent() && !openCodeHas(home, "context7") {
+				steps = append(steps, Step{Desc: "registrar Context7 en OpenCode (~/.config/opencode/opencode.json)", Fn: func() error { return addOpenCodeMCP(home, "context7", Context7URL) }})
+			}
 		case CodeGraph:
 			need(id, "claude")
 			if !have("codegraph") {
 				switch {
 				case have("npm"):
-					steps = append(steps, Step{"instalar CodeGraph con npm (global)", "npm", []string{"install", "-g", CodeGraphPkg}, nil})
+					steps = append(steps, Step{"instalar CodeGraph con npm (global)", "npm", []string{"install", "-g", CodeGraphPkg}, nil, nil})
 				case have("curl"):
 					steps = append(steps, Step{"instalar CodeGraph con su instalador oficial (descarga y ejecuta un script remoto)", "sh",
-						[]string{"-c", "curl -fsSL " + CodeGraphScript + " | sh"}, nil})
+						[]string{"-c", "curl -fsSL " + CodeGraphScript + " | sh"}, nil, nil})
 				default:
 					missing = append(missing, "codegraph no está y no hay 'npm' ni 'curl' para instalarlo")
 				}
 			}
-			steps = append(steps, Step{"registrar CodeGraph en Claude Code", "codegraph", []string{"install", "--yes", "--target=claude"}, nil})
+			steps = append(steps, Step{"registrar CodeGraph en Claude Code", "codegraph", []string{"install", "--yes", "--target=claude"}, nil, nil})
 			notes = append(notes, "codegraph: "+infos[id].Warn)
 		}
 	}

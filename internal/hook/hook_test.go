@@ -2,10 +2,10 @@ package hook
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"v-ia/internal/review"
 )
@@ -148,7 +148,10 @@ func TestDeliveryNeedsReceiptWhenChecksExist(t *testing.T) {
 	if !bash(root, "git commit -m x").Block {
 		t.Fatal("sin recibo no se debe poder commitear")
 	}
-	if _, err := review.Run(root, review.DetectCommands(root), time.Minute); err != nil {
+	if err := exec.Command("git", "-C", root, "init", "-q").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := review.Run(root, review.DetectCommands(root), review.RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if r := bash(root, "git commit -m x"); r.Block {

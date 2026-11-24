@@ -93,3 +93,24 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("%v", out)
 	}
 }
+
+func TestVerifyEvidenceAgainstReceipt(t *testing.T) {
+	doc := "---\nfeature: x\n---\n## Specs\n- S1: algo\n\n## Tareas\n- [x] T-1 (S1) hecho\n- [x] T-2 (S1) hecho\n- [ ] T-3 (S1) pendiente\n\n## Evidencia\n| Tarea | Comando / comprobación | Resultado | Fecha |\n|---|---|---|---|\n| T-1 | `go test ./...` | ok | hoy |\n| T-2 | lo miré a ojo | bien | hoy |\n\n## Log\n- L1: algo\n"
+	backed, unbacked := Verify(doc, []string{"go build ./...", "go test ./..."})
+	if len(backed) != 1 || backed[0] != "T-1" || len(unbacked) != 1 || unbacked[0] != "T-2" {
+		t.Fatalf("backed=%v unbacked=%v", backed, unbacked)
+	}
+	if b, u := Verify(doc, nil); len(b) != 0 || len(u) != 2 {
+		t.Fatalf("sin comandos ejecutados nada está respaldado: %v %v", b, u)
+	}
+}
+
+func TestVerifyIgnoresFlags(t *testing.T) {
+	doc := "---\nfeature: x\n---\n## Specs\n- S1: a\n\n## Tareas\n- [x] T-1 (S1) hecho\n\n## Evidencia\n| Tarea | Comando | Resultado | Fecha |\n|---|---|---|---|\n| T-1 | go test -count=1 -race ./... (todo) | ok | hoy |\n\n## Log\n- L1: a\n"
+	if b, _ := Verify(doc, []string{"go test ./..."}); len(b) != 1 {
+		t.Fatal("las banderas no deben impedir el respaldo")
+	}
+	if b, _ := Verify(doc, []string{"go vet ./..."}); len(b) != 0 {
+		t.Fatal("otro comando no respalda")
+	}
+}

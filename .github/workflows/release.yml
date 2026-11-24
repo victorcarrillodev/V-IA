@@ -9,6 +9,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}  # clave sin contraseña (minisign -G -W); vacío = sin firma
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { fetch-depth: 0 }
@@ -20,6 +22,19 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # vacío = release sin firma minisign (update avisa). Variable de repo: clave(s) pública(s), coma-separadas.
+          MINISIGN_PUBLIC_KEYS: ${{ vars.MINISIGN_PUBLIC_KEYS }}
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: dist/*.tar.gz
+      # Firma checksums.txt con minisign solo si el secreto MINISIGN_SECRET_KEY existe.
+      - name: Firmar checksums.txt (minisign)
+        if: ${{ env.MINISIGN_SECRET_KEY != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          minisign -S -s "$RUNNER_TEMP/minisign.key" -m dist/checksums.txt -x dist/checksums.txt.minisig </dev/null
+          rm -f "$RUNNER_TEMP/minisign.key"
+          gh release upload "${GITHUB_REF_NAME}" dist/checksums.txt.minisig

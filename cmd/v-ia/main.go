@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,11 +21,13 @@ import (
 	"v-ia/internal/extras"
 	"v-ia/internal/guard"
 	"v-ia/internal/hook"
+	"v-ia/internal/install"
 	"v-ia/internal/lifecycle"
 	"v-ia/internal/registry"
 	"v-ia/internal/review"
 	"v-ia/internal/standards"
 	"v-ia/internal/task"
+	"v-ia/internal/telemetry"
 	"v-ia/internal/tui"
 )
 
@@ -38,7 +43,10 @@ func run(args []string) int {
 		return cmdTUI()
 	}
 	switch args[0] {
-	case "version":
+	case "help", "--help", "-h":
+		fmt.Print(usageText)
+		return 0
+	case "version", "--version", "-v":
 		fmt.Println("v-ia", adapters.Version)
 		return 0
 	case "install":
@@ -61,6 +69,12 @@ func run(args []string) int {
 		return cmdHook(args[1:])
 	case "mode":
 		return cmdMode(args[1:])
+	case "tdd":
+		return cmdTDD(args[1:])
+	case "telemetry":
+		return cmdTelemetry(args[1:])
+	case "bench":
+		return cmdBench(args[1:])
 	case "review":
 		return cmdReview(args[1:])
 	case "update":
@@ -72,8 +86,34 @@ func run(args []string) int {
 	case "skill-registry":
 		return cmdRegistry(args[1:])
 	}
-	return fail("comando desconocido %q", args[0])
+	fmt.Fprintf(os.Stderr, "✗ comando desconocido %q (v-ia --help lista los comandos)\n", args[0])
+	return 2
 }
+
+const usageText = `v-ia ` + adapters.Version + ` — ODD universal para agentes de IA
+
+USO
+  v-ia                    TUI interactiva
+  v-ia <comando> [flags]
+
+COMANDOS
+  install | sync | uninstall   Configura (o retira) ODD en los agentes   [--dry-run --yes --agent --scope global|workspace --preset --persona ...]
+  update [--check --yes --channel stable|beta]   Actualiza el binario desde la release (sha256, atestación, minisign)
+  upgrade --src DIR            Recompila desde el código fuente
+  restore --list | latest --yes | --pin|--unpin [dir]   Backups
+  doctor                       Diagnóstico de solo lectura
+  mode | tdd                   Modo del proyecto / TDD estricto
+  task new|check|verify|status Fichas ODD
+  review check|verify|assess|ack|mode   Revisión RDD con recibo
+  guard start|check            Huella del árbol
+  standards init|check|install|off|status   Estándares del proyecto
+  skill-registry list|refresh  Índice de skills
+  deps [--yes --only a,b]      Engram, Context7, CodeGraph
+  telemetry | bench            Recuento local / coste del hook
+  version                      Muestra la versión
+
+Detalle: docs/manual.md. Códigos de salida: 0 bien, 1 fallo, 2 uso incorrecto.
+`
 
 func backupRoot(home string) string { return filepath.Join(home, ".v-ia", "backups") }
 
@@ -83,25 +123,62 @@ func cmdPlan(kind string, args []string) int {
 	dry := fs.Bool("dry-run", false, "mostrar diff sin escribir")
 	yes := fs.Bool("yes", false, "aplicar sin confirmación")
 	force := fs.Bool("force", false, "sobrescribir lo editado a mano (con backup)")
-	agent := fs.String("agent", "claude-code", "agentes separados por coma ("+agentNames()+", generic)")
+	agent := fs.String("agent", "claude-code", "agentes separados por coma ("+agentNames()+", generic) o auto (los detectados en PATH, más claude-code)")
 	noHooks := fs.Bool("no-hooks", false, "no instalar los hooks que hacen cumplir ODD")
 	noPerms := fs.Bool("no-permissions", false, "no sembrar la deny-list de archivos sensibles")
 	engram := fs.Bool("engram", false, "además, configurar Engram (memoria) con 'engram setup claude-code'")
 	ctx7 := fs.Bool("context7", false, "además, registrar Context7 (documentación por MCP)")
 	cgraph := fs.Bool("codegraph", false, "además, instalar y registrar CodeGraph (grafo de código por MCP)")
 	all := fs.Bool("all", false, "además, todos los opcionales: engram, context7 y codegraph")
+	persona := fs.String("persona", "neutral", "tono del agente: "+strings.Join(adapters.Personas, " | "))
+	preset := fs.String("preset", "standard", "minimal (solo instrucciones) | standard (hooks, skills, deny-list) | full (standard + engram, context7 y codegraph)")
+	scope := fs.String("scope", "global", "global (carpeta personal) | workspace (el proyecto actual; solo "+strings.Join(adapters.WorkspaceAgents, ", ")+")")
 	if fs.Parse(args) != nil {
 		return 2
+	}
+	noSkills := false
+	switch *preset {
+	case "standard":
+	case "minimal":
+		*noHooks, *noPerms, noSkills = true, true, true
+	case "full":
+		*all = true
+	default:
+		return fail("preset desconocido: %s (minimal, standard, full)", *preset)
 	}
 	home, err := adapters.Home()
 	if err != nil {
 		return fail("%v", err)
 	}
-	o := lifecycle.Options{Home: home, Agents: splitList(*agent), Force: *force, Hooks: !*noHooks, Permissions: !*noPerms}
+	agents := splitList(*agent)
+	if len(agents) == 1 && agents[0] == "auto" {
+		agents = detectedAgents()
+	}
+	base := home // dónde se escriben instrucciones, skills y hooks; backups y registro van siempre a home
+	switch *scope {
+	case "global":
+	case "workspace":
+		wd, err := os.Getwd()
+		if err != nil {
+			return fail("%v", err)
+		}
+		base = wd
+		for _, a := range agents {
+			if !adapters.SupportsWorkspace(a) {
+				return fail("--scope workspace no admite %q (admiten: %s)", a, strings.Join(adapters.WorkspaceAgents, ", "))
+			}
+		}
+	default:
+		return fail("scope desconocido: %s (global, workspace)", *scope)
+	}
+	o := lifecycle.Options{Home: base, Agents: agents, Force: *force, Hooks: !*noHooks, Permissions: !*noPerms, NoSkills: noSkills, Persona: *persona}
 	for _, a := range o.Agents {
 		if _, ok := adapters.Find(a); !ok {
 			return fail("agente no soportado: %s (disponibles: %s, generic)", a, agentNames())
 		}
+	}
+	if _, ok := adapters.PersonaBlock(*persona); !ok && *persona != "neutral" && *persona != "" {
+		return fail("persona desconocida: %s (%s)", *persona, strings.Join(adapters.Personas, ", "))
 	}
 	var wanted []string
 	for id, on := range map[string]bool{extras.Engram: *engram, extras.Context7: *ctx7, extras.CodeGraph: *cgraph} {
@@ -141,6 +218,9 @@ func cmdPlan(kind string, args []string) int {
 	if err != nil {
 		return fail("%v", err)
 	}
+	for _, w := range p.Warnings {
+		fmt.Println("! aviso:", w)
+	}
 	for _, a := range p.Actions {
 		switch a.Status {
 		case core.Unchanged:
@@ -172,6 +252,13 @@ func cmdPlan(kind string, args []string) int {
 	dir, err := core.Apply(p, backupRoot(home), time.Now())
 	if err != nil {
 		return fail("%v", err)
+	}
+	switch {
+	case *scope == "workspace": // el registro de instalación es global: no se toca
+	case kind == "install":
+		_ = install.Add(home, install.Record{Version: adapters.Version, Preset: *preset, Agents: o.Agents, Components: wanted, Hooks: o.Hooks, Skills: !o.NoSkills, Updated: time.Now().UTC()})
+	case kind == "uninstall":
+		_ = install.Remove(home, o.Agents)
 	}
 	if dir == "" {
 		fmt.Println("✓ nada que cambiar")
@@ -250,7 +337,7 @@ func cmdRestore(args []string) int {
 	}
 	root := backupRoot(home)
 	if len(args) == 0 {
-		return fail("uso: restore --list | restore latest --yes")
+		return fail("uso: restore --list | restore latest --yes | restore --pin|--unpin [dir]")
 	}
 	switch args[0] {
 	case "--list":
@@ -259,8 +346,30 @@ func cmdRestore(args []string) int {
 			return fail("%v", err)
 		}
 		for _, b := range l {
+			if core.IsPinned(b) {
+				fmt.Println(b, "[pinned]")
+				continue
+			}
 			fmt.Println(b)
 		}
+		return 0
+	case "--pin", "--unpin":
+		d, err := core.Latest(root)
+		if len(args) > 1 {
+			d, err = args[1], nil
+		}
+		if err != nil {
+			return fail("%v", err)
+		}
+		if args[0] == "--pin" {
+			err = core.Pin(d)
+		} else {
+			err = core.Unpin(d)
+		}
+		if err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println("✓", args[0][2:], d)
 		return 0
 	case "latest":
 		if len(args) < 2 || args[1] != "--yes" {
@@ -276,7 +385,7 @@ func cmdRestore(args []string) int {
 		fmt.Println("✓ restaurado desde", d)
 		return 0
 	}
-	return fail("uso: restore --list | restore latest --yes")
+	return fail("uso: restore --list | restore latest --yes | restore --pin|--unpin [dir]")
 }
 
 func cmdDoctor() int {
@@ -315,7 +424,7 @@ func cmdTUI() int {
 
 func cmdTask(args []string) int {
 	if len(args) == 0 {
-		return fail("uso: task new <feature> [--request \"texto literal\"] | task check | task status")
+		return fail("uso: task new <feature> [--request \"texto literal\"] | task check | task verify [--strict] | task status")
 	}
 	root, _ := os.Getwd()
 	switch args[0] {
@@ -355,6 +464,8 @@ func cmdTask(args []string) int {
 			}
 		}
 		return 1
+	case "verify":
+		return cmdTaskVerify(root, len(args) > 1 && args[1] == "--strict")
 	case "status":
 		out, err := task.Status(root)
 		if err != nil {
@@ -368,7 +479,7 @@ func cmdTask(args []string) int {
 		}
 		return 0
 	}
-	return fail("uso: task new <feature> | task check | task status")
+	return fail("uso: task new <feature> | task check | task verify [--strict] | task status")
 }
 
 func cmdGuard(args []string) int {
@@ -410,10 +521,27 @@ func cmdHook(args []string) int {
 	if in.Event == "" && len(args) > 0 {
 		in.Event = map[string]string{"pre": "PreToolUse", "prompt": "UserPromptSubmit", "stop": "Stop", "session": "SessionStart"}[args[0]]
 	}
+	cursor := in.Event == "preToolUse" || in.Event == "beforeSubmitPrompt" // Cursor exige JSON en stdout
 	r := hook.Handle(in)
 	if r.Block {
+		if h, err := adapters.Home(); err == nil {
+			telemetry.Record(h, "block:"+hook.Category(r.Msg))
+		}
 		fmt.Fprintln(os.Stderr, r.Msg)
 		return 2
+	}
+	if cursor {
+		if in.Event == "beforeSubmitPrompt" {
+			fmt.Println(`{"continue":true}`)
+		} else {
+			fmt.Println(`{"permission":"allow"}`)
+		}
+		return 0
+	}
+	if r.Msg != "" && in.TurnID != "" { // Codex: el texto plano cuenta como hook fallido; espera JSON
+		b, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": r.Msg}})
+		fmt.Println(string(b))
+		return 0
 	}
 	if r.Msg != "" {
 		fmt.Println(r.Msg)
@@ -451,11 +579,20 @@ func cmdReview(args []string) int {
 		return fail("%v", err)
 	}
 	if len(args) == 0 {
-		return fail("uso: review check | verify | assess | ack | mode status|enable|disable")
+		return fail("uso: review check | status | verify | assess | ack | inspect | reset | mode status|enable|disable")
 	}
 	switch args[0] {
 	case "check":
-		r, err := review.Run(root, review.DetectCommands(root), 10*time.Minute)
+		cfs := flag.NewFlagSet("check", flag.ContinueOnError)
+		lenses := cfs.String("lenses", "", "lentes a revisar (risk,resilience,readability,reliability); solo en medium/high")
+		lreason := cfs.String("lenses-reason", "", "razón de la selección de lentes (obligatoria con --lenses)")
+		escItem := cfs.Int("escalate-item", 0, "sube a riesgo ALTO por un ítem cerrado 1-6 (datos, seguridad, contratos, concurrencia, entrega, sin test)")
+		escReason := cfs.String("escalate-reason", "", "razón del escalado (una línea, ≤500 bytes)")
+		baseRef := cfs.String("base-ref", "", "referencia base (por defecto HEAD)")
+		if cfs.Parse(args[1:]) != nil {
+			return 2
+		}
+		r, err := review.Run(root, review.DetectCommands(root), review.RunOptions{Base: *baseRef, Lenses: splitList(*lenses), LensReason: *lreason, EscItem: *escItem, EscReason: *escReason})
 		if err != nil {
 			return fail("%v", err)
 		}
@@ -477,9 +614,10 @@ func cmdReview(args []string) int {
 			}
 		}
 		fmt.Printf("riesgo: %s (%s)\n", r.Risk.Tier, strings.Join(r.Risk.Reasons, "; "))
-		fmt.Printf("recibo: %s (candidato %.12s)\n", r.Result, r.CandidateID)
-		if on, _ := review.Mode(root, home); on && r.Risk.ReviewDue {
-			fmt.Println("! riesgo ALTO: antes de entregar, lanza el subagente v-ia-reviewer (revisa y registra con 'v-ia review ack')")
+		fmt.Printf("recibo: %s (candidato %.12s, intento %d)\n", r.Result, r.CandidateID, r.Attempt)
+		if on, _ := review.Mode(root, home); on && r.Risk.ReviewDue && r.Result == "pass" {
+			fmt.Printf("! revisión independiente debida (%s): lanza v-ia-reviewer por cada lente (%s) y registra con 'v-ia review ack --input FILE'\n", r.Risk.ReviewDueReason, strings.Join(r.SelectedLenses, ", "))
+			fmt.Println("  rutas a cubrir:", strings.Join(r.Paths, " "))
 		}
 		if r.Result != "pass" {
 			return 1
@@ -503,17 +641,74 @@ func cmdReview(args []string) int {
 		fmt.Println(string(b))
 		return 0
 	case "ack":
-		fs := flag.NewFlagSet("ack", flag.ContinueOnError)
-		verdict := fs.String("verdict", "", "approve | changes")
-		reviewer := fs.String("reviewer", "manual", "quién revisó")
-		note := fs.String("note", "", "resumen")
-		if fs.Parse(args[1:]) != nil {
+		afs := flag.NewFlagSet("ack", flag.ContinueOnError)
+		input := afs.String("input", "-", "JSON de la revisión de una lente (- = stdin)")
+		if afs.Parse(args[1:]) != nil {
 			return 2
 		}
-		if err := review.RecordAck(root, *verdict, *reviewer, *note); err != nil {
+		var raw []byte
+		var rerr error
+		if *input == "-" {
+			raw, rerr = io.ReadAll(os.Stdin)
+		} else {
+			raw, rerr = os.ReadFile(*input)
+		}
+		if rerr != nil {
+			return fail("%v", rerr)
+		}
+		var in review.ReviewInput
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields() // esquema estricto: un campo desconocido se rechaza antes de cambiar nada
+		if err := dec.Decode(&in); err != nil {
+			return fail("revisión inválida: %v", err)
+		}
+		r, err := review.RecordReview(root, in)
+		if err != nil {
 			return fail("%v", err)
 		}
-		fmt.Println("✓ veredicto registrado:", *verdict)
+		for _, x := range r.Reviews {
+			if x.Lens == in.Lens {
+				fmt.Printf("✓ lente %s admitida: veredicto %s (calculado), %d hallazgo(s)\n", x.Lens, x.Verdict, len(x.Findings))
+			}
+		}
+		st := review.Status(root)
+		fmt.Printf("estado: %s (%s)", st.State, st.Detail)
+		if len(st.Pending) > 0 {
+			fmt.Printf("; faltan lentes: %s", strings.Join(st.Pending, ", "))
+		}
+		fmt.Println()
+		return 0
+	case "status":
+		st := review.Status(root)
+		if len(args) > 1 && args[1] == "--json" {
+			b, _ := json.MarshalIndent(st, "", "  ")
+			fmt.Println(string(b))
+			return 0
+		}
+		fmt.Printf("%s (%s) → %s\n", st.State, st.Detail, st.NextTransition)
+		return 0
+	case "inspect":
+		ifs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+		op := ifs.String("op", "name-status", "name-status | numstat | stat | patch | object")
+		path := ifs.String("path", "", "ruta (patch u object)")
+		if ifs.Parse(args[1:]) != nil {
+			return 2
+		}
+		r, err := review.Load(root)
+		if err != nil {
+			return fail("%v", err)
+		}
+		out, err := review.Inspect(root, r, *op, *path)
+		if err != nil {
+			return fail("%v", err)
+		}
+		fmt.Print(out)
+		return 0
+	case "reset":
+		if err := review.Reset(root); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println("✓ recibo descartado: la siguiente 'review check' empieza una revisión nueva")
 		return 0
 	case "mode":
 		sub := "status"
@@ -569,4 +764,130 @@ func cmdRegistry(args []string) int {
 		return 0
 	}
 	return fail("uso: skill-registry list | refresh")
+}
+
+// cmdTDD activa o desactiva el TDD estricto del proyecto actual.
+func cmdTDD(args []string) int {
+	root, _ := os.Getwd()
+	if len(args) == 0 || args[0] == "status" {
+		if hook.TDDEnabled(root) {
+			fmt.Println("tdd estricto: on (no se edita código de producción sin una prueba nueva o modificada)")
+		} else {
+			fmt.Println("tdd estricto: off")
+		}
+		return 0
+	}
+	switch args[0] {
+	case "on", "off":
+		if err := hook.SetTDD(root, args[0] == "on"); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println("✓ tdd estricto:", args[0])
+		return 0
+	}
+	return fail("uso: tdd on | off | status")
+}
+
+// cmdTaskVerify contrasta la evidencia de las fichas con el recibo vigente de `review check`.
+func cmdTaskVerify(root string, strict bool) int {
+	if err := review.Verify(root, false); err != nil {
+		return fail("no hay recibo vigente con el que contrastar: %v", err)
+	}
+	r, err := review.Load(root)
+	if err != nil {
+		return fail("%v", err)
+	}
+	var ran []string
+	for _, c := range r.Checks {
+		if c.Exit == 0 {
+			ran = append(ran, c.Cmd)
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(root, "odd", "tasks", "*.md"))
+	bad := 0
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return fail("%v", err)
+		}
+		backed, unbacked := task.Verify(string(b), ran)
+		fmt.Printf("%s: %d respaldadas por el recibo, %d sin respaldo\n", filepath.Base(f), len(backed), len(unbacked))
+		for _, id := range unbacked {
+			fmt.Printf("  ! %s: su evidencia no cita ninguna comprobación ejecutada por 'review check'\n", id)
+		}
+		bad += len(unbacked)
+	}
+	if bad > 0 && strict {
+		return 1
+	}
+	return 0
+}
+
+// detectedAgents devuelve claude-code (el principal) y los demás agentes que haya en PATH.
+func detectedAgents() []string {
+	out := []string{"claude-code"}
+	for _, a := range adapters.All {
+		if a.Name != "claude-code" && a.Detected() {
+			out = append(out, a.Name)
+		}
+	}
+	return out
+}
+
+// cmdTelemetry gestiona el recuento local (sin red) de bloqueos.
+func cmdTelemetry(args []string) int {
+	home, err := adapters.Home()
+	if err != nil {
+		return fail("%v", err)
+	}
+	if len(args) == 0 || args[0] == "status" {
+		state := "off"
+		if telemetry.Enabled(home) {
+			state = "on"
+		}
+		fmt.Println("recuento local:", state, "(solo en este equipo; no hay envío por red)")
+		return 0
+	}
+	switch args[0] {
+	case "on", "off":
+		if err := telemetry.Set(home, args[0] == "on"); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println("✓ recuento local:", args[0])
+	case "show":
+		d := telemetry.Load(home)
+		if len(d.Counts) == 0 {
+			fmt.Println("sin datos (¿activaste `v-ia telemetry on`?)")
+		}
+		for _, e := range d.Sorted() {
+			fmt.Printf("%-24s %d\n", e, d.Counts[e])
+		}
+	case "reset":
+		if err := telemetry.Reset(home); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println("✓ contadores borrados")
+	default:
+		return fail("uso: telemetry on | off | status | show | reset")
+	}
+	return 0
+}
+
+// cmdBench mide cuánto tarda V-IA en decidir cada tipo de acción (lo que añade a cada herramienta).
+func cmdBench(args []string) int {
+	n := 200
+	if len(args) > 1 && args[0] == "-n" {
+		if v, err := strconv.Atoi(args[1]); err == nil && v > 0 {
+			n = v
+		}
+	}
+	res, err := hook.Bench(n)
+	if err != nil {
+		return fail("%v", err)
+	}
+	fmt.Printf("%-34s %10s %10s %10s\n", "decisión del hook ("+strconv.Itoa(n)+" iteraciones)", "mediana", "p95", "máx")
+	for _, r := range res {
+		fmt.Printf("%-34s %10s %10s %10s\n", r.Name, r.P50, r.P95, r.Max)
+	}
+	return 0
 }

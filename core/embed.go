@@ -3,5 +3,5 @@ package corefs
 
 import "embed"
 
-//go:embed odd skills agents memory
+//go:embed odd skills agents memory plugins personas
 var FS embed.FS

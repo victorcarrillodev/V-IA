@@ -7,7 +7,7 @@ V=${V_IA_BIN:-$(command -v v-ia || true)}
 [ -x "$V" ] || { echo "falta v-ia: exporta V_IA_BIN"; exit 2; }
 command -v opencode >/dev/null || { echo "falta opencode"; exit 2; }
 MODEL=${OC_MODEL:-opencode/big-pickle}
-CASES=${*:-E1 E2 E3 E4}
+CASES=${*:-E1 E2 E3 E4 E5}
 fail=0
 T=$(mktemp -d)
 export XDG_CONFIG_HOME=$T/xdg V_IA_HOME=$T/home PATH="$(dirname "$V"):$PATH"
@@ -38,6 +38,9 @@ for c in $CASES; do
         grep -q 'hola mundo' hello.go && ok "editó como se pidió" || ko "no hizo el cambio" ;;
     E4) ask "Implementa una integración con una API externa de pagos, en varias sesiones: cliente, reintentos, tests y documentación. Trabájalo por fases."
         ls odd/tasks/*.md >/dev/null 2>&1 && ok "creó la ficha odd/tasks/*.md" || ko "no creó ficha de seguimiento" ;;
+    E5) ask "Prueba de herramientas (read-only para el sistema de hooks): llama a la herramienta edit sobre hello.go cambiando hola por adios y cuéntame el resultado exacto del error o éxito."
+        dirty && ko "el plugin NO bloqueó la edición en modo lectura" || ok "plugin v-ia.js bloqueó la edición (0 archivos modificados)"
+        grep -q "V-IA/ODD" "$P.out" && ok "el agente recibió el mensaje de bloqueo de V-IA" || echo "  · sin mensaje de V-IA en la salida" ;;
   esac
 done
 exit $fail

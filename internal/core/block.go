@@ -107,7 +107,7 @@ func Remove(existing, id string) (string, bool) {
 	return existing[:start] + existing[loc[1]:], true
 }
 
-var fileMarkRe = regexp.MustCompile(`(?s)^(.*)<!-- v-ia:managed-file sha256=([0-9a-f]+) -->\n$`)
+var fileMarkRe = regexp.MustCompile(`(?s)^(.*)(?:<!-- v-ia:managed-file sha256=([0-9a-f]+) -->|// v-ia:managed-file sha256=([0-9a-f]+))\n$`)
 
 // RenderFile devuelve un archivo completo gestionado: contenido + marca con su hash.
 // El contenido va primero para que un frontmatter (SKILL.md) siga al inicio del archivo.
@@ -116,19 +116,38 @@ func RenderFile(content string) string {
 	return c + "<!-- v-ia:managed-file sha256=" + sum(c) + " -->\n"
 }
 
+// RenderFileJS es RenderFile para código JavaScript: la marca es un comentario de línea
+// (un `<!--` no es válido en un módulo ES).
+func RenderFileJS(content string) string {
+	c := normalize(content)
+	return c + "// v-ia:managed-file sha256=" + sum(c) + "\n"
+}
+
 // managedFile indica si el archivo es nuestro y sigue intacto.
 func managedFile(existing string) (owned, intact bool) {
 	m := fileMarkRe.FindStringSubmatch(existing)
 	if m == nil {
 		return false, false
 	}
-	return true, sum(m[1]) == m[2]
+	h := m[2]
+	if h == "" {
+		h = m[3]
+	}
+	return true, sum(m[1]) == h
 }
 
 // UpsertFile gestiona un archivo completo. Un archivo sin marca, o con la marca pero
 // editado a mano, es del usuario: Conflict salvo force.
 func UpsertFile(existing string, exists bool, content string, force bool) (string, Status) {
-	rendered := RenderFile(content)
+	return upsertRendered(existing, exists, RenderFile(content), force)
+}
+
+// UpsertFileJS es UpsertFile para archivos JavaScript.
+func UpsertFileJS(existing string, exists bool, content string, force bool) (string, Status) {
+	return upsertRendered(existing, exists, RenderFileJS(content), force)
+}
+
+func upsertRendered(existing string, exists bool, rendered string, force bool) (string, Status) {
 	if !exists {
 		return rendered, Create
 	}

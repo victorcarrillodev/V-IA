@@ -59,6 +59,47 @@ func Latest() (string, error) {
 	return r.Tag, nil
 }
 
+// LatestChannel devuelve la última etiqueta del canal: "stable" (por defecto) usa la
+// última release estable; "beta" (alias "nightly") incluye prereleases y elige la de
+// versión más alta, sin contar borradores.
+func LatestChannel(channel string) (string, error) {
+	switch channel {
+	case "", "stable":
+		return Latest()
+	case "beta", "nightly":
+	default:
+		return "", fmt.Errorf("canal desconocido %q (usa stable o beta)", channel)
+	}
+	resp, err := Client.Get(fmt.Sprintf("%s/repos/%s/releases?per_page=30", APIBase, Repo))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub respondió %s", resp.Status)
+	}
+	var rs []struct {
+		Tag   string `json:"tag_name"`
+		Draft bool   `json:"draft"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&rs); err != nil {
+		return "", errors.New("respuesta de GitHub ilegible")
+	}
+	best := ""
+	for _, r := range rs {
+		if r.Draft || !tagRe.MatchString(r.Tag) {
+			continue
+		}
+		if best == "" || Newer(best, r.Tag) {
+			best = r.Tag
+		}
+	}
+	if best == "" {
+		return "", errors.New("no hay ninguna release publicada (o el repositorio es privado)")
+	}
+	return best, nil
+}
+
 func parse(v string) (n [3]int, ok bool) {
 	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".", 3)
 	if len(parts) != 3 {
@@ -117,6 +158,9 @@ func Download(tag, goos, goarch, dir string) (string, error) {
 	}
 	sb, _ := io.ReadAll(io.LimitReader(sums, 1<<20))
 	sums.Close()
+	if err := verifySums(sb, base); err != nil {
+		return "", err
+	}
 	want := ""
 	for _, l := range strings.Split(string(sb), "\n") {
 		if f := strings.Fields(l); len(f) == 2 && f[1] == asset {

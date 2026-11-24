@@ -2,10 +2,10 @@ package hook
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	corefs "v-ia/core"
 	"v-ia/internal/review"
@@ -82,7 +82,10 @@ func TestE7_CommitTrasReciboSoloSiElUsuarioLoPidio(t *testing.T) {
 	root := newProj(t)
 	os.MkdirAll(filepath.Join(root, ".v-ia"), 0o755)
 	os.WriteFile(filepath.Join(root, ".v-ia", "checks.txt"), []byte("true\n"), 0o644)
-	if _, err := review.Run(root, review.DetectCommands(root), time.Minute); err != nil {
+	if err := exec.Command("git", "-C", root, "init", "-q").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := review.Run(root, review.DetectCommands(root), review.RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	prompt(root, "sigue con lo demás") // recibo pass, pero nadie pidió commit

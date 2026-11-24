@@ -59,7 +59,7 @@ var menu = []menuItem{
 
 const (
 	minW = 60
-	minH = 18
+	minH = 20
 )
 
 type applyDoneMsg struct {
@@ -476,7 +476,14 @@ func (m Model) content() (body, footer string) {
 		return strings.TrimRight(b.String(), "\n"), help("↑↓", "mover", "enter", "elegir", "q", "salir")
 	case scAgents:
 		b.WriteString("Elige los agentes a configurar:\n\n")
-		for i, a := range m.agents {
+		rows := max(3, m.h-20) // la lista se desplaza: caben más agentes que filas
+		start := min(max(0, m.cursor-rows/2), max(0, len(m.agents)-rows))
+		end := min(len(m.agents), start+rows)
+		if start > 0 {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d más\n", start)))
+		}
+		for i := start; i < end; i++ {
+			a := m.agents[i]
 			cur, box := "  ", "[ ]"
 			if i == m.cursor {
 				cur = selStyle.Render("▸ ")
@@ -488,7 +495,10 @@ func (m Model) content() (body, footer string) {
 			if a.Hooks {
 				how = accentText.Render("bloqueo por hooks")
 			}
-			b.WriteString(fmt.Sprintf("%s%s %-12s %s%s\n", cur, box, a.Name, how, dimStyle.Render(detectedLabel(m.detected[i]))))
+			b.WriteString(fmt.Sprintf("%s%s %-14s %s%s\n", cur, box, a.Name, how, dimStyle.Render(detectedLabel(m.detected[i]))))
+		}
+		if end < len(m.agents) {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  ↓ %d más\n", len(m.agents)-end)))
 		}
 		if len(m.selectedNames()) == 0 {
 			b.WriteString("\n" + warnStyle.Render("! Marca al menos un agente para continuar."))
@@ -501,7 +511,7 @@ func (m Model) content() (body, footer string) {
 			label, desc string
 		}
 		opts := []opt{
-			{m.optHooks, "Hooks de bloqueo (Claude Code)", "impiden editar en modo lectura, entregar sin pedirlo y cerrar sin evidencia"},
+			{m.optHooks, "Hooks de bloqueo (Claude Code y OpenCode)", "impiden editar en modo lectura, entregar sin pedirlo y cerrar sin evidencia"},
 			{m.optPerms, "Lista de archivos sensibles", "niega leer ~/.ssh, .env, *.pem, *.key y credenciales"},
 		}
 		for i, id := range extras.All {

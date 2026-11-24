@@ -12,6 +12,7 @@ test-runner: <comando>
 
 ## Tareas
 - [ ] T-1 (S1) route=inline commit=- <descripción>
+<!-- route=inline|delegated(<motivo: exploración | escritores paralelos | respaldo de contexto | verificador independiente>); cada tarea de código cierra con "Risk: ítem N (motivo)" o "Risk: none" -->
 
 ## Evidencia
 | Tarea | Comando / comprobación | Resultado observado | Fecha |

@@ -4,7 +4,7 @@
 
 **Hace que un agente de IA trabaje con ODD (Organic Driven Development) y, donde se puede, que lo cumpla de verdad.**
 
-V-IA es un binario de Go (`v-ia`) que configura los agentes de IA que ya usas (Claude Code, OpenCode, Codex, Gemini CLI…) para que sigan un método de trabajo concreto, y en Claude Code **bloquea por mecanismo** lo que el método prohíbe.
+V-IA es un binario de Go (`v-ia`) que configura los agentes de IA que ya usas (Claude Code, OpenCode, Codex, Gemini CLI…) para que sigan un método de trabajo concreto, y en Claude Code y OpenCode **bloquea por mecanismo** lo que el método prohíbe.
 
 > Manual completo con todos los comandos, archivos y reglas: [`docs/manual.md`](docs/manual.md).
 
@@ -40,18 +40,19 @@ V-IA hace tres cosas:
 | Capa | Qué hace |
 |---|---|
 | **Instrucciones** | Escribe las reglas ODD en el archivo global de cada agente (entre marcadores, sin tocar lo tuyo). |
-| **Hooks (solo Claude Code)** | Bloquean ediciones en modo lectura, commits no pedidos, comandos destructivos y cierres sin evidencia. |
+| **Hooks (Claude Code) / plugin (OpenCode)** | Bloquean ediciones y escrituras por Bash en modo lectura, commits no pedidos, comandos destructivos y, con `v-ia tdd on`, código sin prueba. Solo Claude Code bloquea además cierres sin evidencia (`Stop`). |
 | **Herramientas** | `task`, `guard`, `review`, `skill-registry`… que el agente (o tú) ejecutan para comprobar. |
 
-Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **12 skills**, un **subagente revisor**, integración opcional con **Engram** (memoria), **Context7** (documentación por MCP) y **CodeGraph** (grafo de código) y una **deny-list** de archivos sensibles.
+Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **17 skills**, un **subagente revisor**, integración opcional con **Engram** (memoria), **Context7** (documentación por MCP) y **CodeGraph** (grafo de código) y una **deny-list** de archivos sensibles.
 
 ## 3. Qué agentes soporta
 
 | Agente | Cumplimiento | Verificado |
 |---|---|---|
 | **Claude Code** | **Bloqueo por hooks** + skills + subagente revisor | Sí: E1, E2, E3, E7 con Claude real |
-| OpenCode | Solo instrucciones | Sí: E1–E4 con OpenCode 1.19.5 |
-| Codex, Gemini CLI, Kilo, Qwen, Windsurf | Solo instrucciones | **No**: ruta tomada de la documentación de Gentle-AI, no ejecutados |
+| **OpenCode** | **Bloqueo por plugin** (`v-ia.js`) + skills | Sí: E1–E5 con OpenCode 1.19.6 |
+| Gemini CLI, Codex, Cursor | Hooks + skills (experimental; Cursor sin archivo de instrucciones) | **No**: probado solo con cargas de entrada, no con el agente |
+| Kilo, Qwen, Windsurf, Copilot CLI | Instrucciones + skills | **No**: ruta tomada de la documentación de Gentle-AI, no ejecutados |
 | Cualquier otro | `AGENTS.md` en el proyecto (`--agent generic`) | No |
 
 "Solo instrucciones" significa que el agente *debería* obedecer, pero nada se lo impide.
@@ -119,12 +120,14 @@ Qué escribe para Claude Code:
 |---|---|
 | `~/.claude/CLAUDE.md` | Bloque ODD entre marcadores `<!-- v-ia:managed … -->`. Tu contenido no se toca. |
 | `~/.claude/settings.json` | 4 hooks (`PreToolUse`, `UserPromptSubmit`, `Stop`, `SessionStart`) + deny-list de archivos sensibles. |
-| `~/.claude/skills/<skill>/SKILL.md` | 12 skills: `odd-resume`, `odd-verify`, `odd-delegate`, `rdd-review`, `work-unit-commits`, `branch-pr`, `issue-creation`, `chained-pr`, `judgment-day`, `skill-creator`, `comment-writer`, `rdd-defect-workflow`. |
+| `~/.claude/skills/<skill>/SKILL.md` | 17 skills: `odd-resume`, `odd-verify`, `odd-delegate`, `rdd-review`, `work-unit-commits`, `branch-pr`, `issue-creation`, `chained-pr`, `judgment-day`, `skill-creator`, `comment-writer`, `rdd-defect-workflow`, `go-testing`, `skill-improver`, `systemic-issue-triage`, `cognitive-doc-design`, `skill-registry`. Las mismas skills se instalan en la carpeta de skills de cada agente que las admite. |
 | `~/.claude/agents/v-ia-reviewer.md` | Subagente revisor independiente (solo lectura). |
 
 > ⚠️ `settings.json` se reescribe con las claves en **orden alfabético** (el contenido se conserva, el formato cambia). Si tienes comentarios o un JSON no estricto, V-IA se niega a tocarlo.
 
-Opciones: `--no-hooks`, `--no-permissions`, `--force`, `--engram`, `--context7`, `--codegraph`, `--all`. Para instalar solo lo que falte de los opcionales: `v-ia deps`. Detalle en el [manual](docs/manual.md#instalación-y-ciclo-de-vida).
+Con `--persona mentor|direct` añade un tono al agente. Para Gemini CLI, Codex y Cursor fusiona además sus hooks (experimental, sin verificar con el agente real). Para OpenCode escribe además `~/.config/opencode/plugins/v-ia.js` (el plugin que bloquea). `--agent auto` elige claude-code más los agentes detectados. `--preset minimal` instala solo instrucciones; `--preset full` añade Engram, Context7 y CodeGraph.
+
+Opciones: `--preset`, `--no-hooks`, `--no-permissions`, `--force`, `--engram`, `--context7`, `--codegraph`, `--all`. Para instalar solo lo que falte de los opcionales: `v-ia deps`. Detalle en el [manual](docs/manual.md#instalación-y-ciclo-de-vida).
 
 ### 4.4 Componentes opcionales: Engram, Context7, CodeGraph
 
@@ -176,7 +179,7 @@ Ejecuta `v-ia` sin argumentos en un terminal y se abre un panel con el logo y un
 | Sincronizar / Desinstalar | Mismo flujo de revisión y aplicación, con backup. |
 | Restaurar último backup | Con confirmación previa. |
 
-Teclas: `↑↓` o `j/k` mover · `enter` elegir · `espacio` marcar · `esc` volver · `q` salir. El logo se adapta al tamaño del terminal (grande ≥112×40, mediano ≥70×28 o una línea) y todo el panel queda centrado en horizontal y vertical, con un ancho que escala con la ventana. En Ghostty y kitty el logo se dibuja como **imagen real** (protocolo gráfico de kitty); en el resto, con medios bloques en color verdadero y, sin color (`NO_COLOR`), con formas sombreadas. `V_IA_IMAGES=0` fuerza los bloques y `V_IA_IMAGES=1` fuerza la imagen. Mínimo 60×18.
+Teclas: `↑↓` o `j/k` mover · `enter` elegir · `espacio` marcar · `esc` volver · `q` salir. El logo se adapta al tamaño del terminal (grande ≥112×40, mediano ≥70×28 o una línea) y todo el panel queda centrado en horizontal y vertical, con un ancho que escala con la ventana. En Ghostty y kitty el logo se dibuja como **imagen real** (protocolo gráfico de kitty); en el resto, con medios bloques en color verdadero y, sin color (`NO_COLOR`), con formas sombreadas. `V_IA_IMAGES=0` fuerza los bloques y `V_IA_IMAGES=1` fuerza la imagen. Mínimo 60×20. `V_IA_THEME=rose|ocean|mono` cambia la paleta.
 
 > Ábrelo dentro de la carpeta de tu proyecto si quieres ver el panel "Proyecto actual" de ese proyecto.
 
@@ -231,6 +234,18 @@ v-ia standards install    # pre-commit de Git (avisa; --strict bloquea)
 
 Las reglas `path` y `deny` se evalúan en local **sin gastar tokens**; solo las `ai` usan un agente, con una única llamada barata por revisión y caché. Si el agente falla, no bloquea. Detalle en el [manual](docs/manual.md#estándares-del-proyecto-v-ia-standards).
 
+## 6c. TDD estricto y evidencia
+
+```bash
+v-ia tdd on            # no se edita código de producción sin una prueba nueva o modificada
+v-ia review check      # ejecuta las comprobaciones y emite el recibo
+v-ia bench             # latencia que el hook añade a cada herramienta
+v-ia telemetry on      # recuento local (sin red) de qué bloquea V-IA
+v-ia task verify       # (--strict para fallar) contrasta la evidencia de las fichas con lo que el recibo ejecutó
+```
+
+Qué garantiza y qué no cada control: [`docs/threat-model.md`](docs/threat-model.md).
+
 ## 7. Qué comprobar si algo falla
 
 | Síntoma | Causa probable | Solución |
@@ -251,14 +266,14 @@ Más en el [manual](docs/manual.md#solución-de-problemas).
 
 Lee esto antes de fiarte:
 
-- **Solo Claude Code se hace cumplir por bloqueo.** El resto depende de que el modelo obedezca.
+- **Solo Claude Code y OpenCode tienen el bloqueo verificado con el agente real.** Gemini CLI, Codex y Cursor tienen hooks escritos según su documentación, sin ejecutarlos; el resto depende de que el modelo obedezca. OpenCode no tiene equivalente del hook `Stop`.
 - **La clasificación lectura/edición es por palabras clave**; una frase ambigua puede clasificarse mal. Solo se afina usándolo.
-- **Un `sed -i` desde Bash en modo lectura no se bloquea al instante**: lo detecta el hook de cierre (`Stop`).
-- **`task check` valida la forma de la evidencia, no que el comando se ejecutara de verdad.**
+- **Las escrituras por Bash en modo lectura se detectan por heurística** (redirecciones, `sed -i`, `tee`, `mv`, `rm`…): un script que escriba por su cuenta puede pasar; en Claude Code lo detecta después el hook `Stop`.
+- **`task check` valida la forma de la evidencia**; `task verify` la contrasta con las comprobaciones del recibo, pero no demuestra que el resultado sea correcto.
 - Engram no está probado con el binario real; solo con uno simulado.
-- Codex, Gemini, Kilo, Qwen y Windsurf: rutas sin verificar con el agente real.
+- Codex, Gemini, Kilo, Qwen, Windsurf y Copilot CLI: rutas de instrucciones y de skills sin verificar con el agente real.
 - Aún no hay release publicada: hasta entonces se compila desde el código fuente (4.1–4.2). El instalador de una línea no se ha probado contra una release real.
-- **Frente a Gentle-AI** (el proyecto que inspiró este): V-IA es mucho más pequeño. Tiene 12 skills (ellos, una biblioteca amplia), 2 agentes verificados con agentes reales (ellos, 17), solo Linux probado (ellos, macOS/Linux/Windows con releases firmadas), un RDD local con recibo (ellos, transacciones atómicas y proveedores de revisión) y sin benchmarks, personas ni telemetría. Su diferencia es el bloqueo duro por hooks en Claude Code, `v-ia standards` y `v-ia deps`.
+- **Frente a Gentle-AI** (el proyecto que inspiró este): V-IA es mucho más pequeño. Tiene 17 skills (ellos, una biblioteca más amplia), 2 agentes con bloqueo verificado con agentes reales (ellos, 17 integraciones), solo Linux probado (ellos, macOS/Linux/Windows con releases firmadas), un RDD local con recibo (ellos, transacciones atómicas y proveedores de revisión) y sin benchmarks, personas ni telemetría. Su diferencia es el bloqueo duro por hooks en Claude Code, `v-ia standards` y `v-ia deps`.
 - El logo como imagen real solo está pensado para Ghostty y kitty; no funciona dentro de tmux (ahí se usan bloques).
 
 ## 9. Desarrollo y pruebas
@@ -266,7 +281,7 @@ Lee esto antes de fiarte:
 ```bash
 go build ./... && go vet ./... && go test ./...      # incluye pruebas anti-huérfanos (internal/lifecycle/orphans_test.go)
 V_IA_BIN=$PWD/v-ia ./scripts/e2e-claude.sh           # E1,E2,E3,E7 con Claude real (consume tokens)
-V_IA_BIN=$PWD/v-ia ./scripts/e2e-opencode.sh         # E1–E4 con OpenCode real (modelo gratuito)
+V_IA_BIN=$PWD/v-ia ./scripts/e2e-opencode.sh         # E1–E5 con OpenCode real (modelo gratuito)
 ```
 
 `internal/lifecycle/orphans_test.go` falla si una skill o archivo embebido queda sin usar, o si un comando no está documentado en el manual.
@@ -282,6 +297,7 @@ V-IA nace de la idea y el trabajo de **[Gentle-AI](https://github.com/Gentleman-
 | Archivo | Contenido |
 |---|---|
 | [`docs/manual.md`](docs/manual.md) | Manual completo: comandos, reglas, archivos, formatos |
+| [`docs/threat-model.md`](docs/threat-model.md) | Qué impide V-IA, contra qué y qué no |
 | [`docs/capabilities.md`](docs/capabilities.md) | Qué está verificado y qué no, por agente |
 | [`PLAN.md`](PLAN.md) | Plan original y decisiones de diseño |
 

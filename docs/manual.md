@@ -74,22 +74,26 @@ Los archivos completos (skills, subagente) llevan al final `<!-- v-ia:managed-fi
 ### `v-ia install`
 
 ```
-v-ia install [--dry-run] [--yes] [--force] [--agent a,b] [--no-hooks] [--no-permissions] [--engram] [--context7] [--codegraph] [--all]
+v-ia install [--dry-run] [--yes] [--force] [--agent a,b] [--no-hooks] [--no-permissions] [--preset minimal|standard|full] [--persona neutral|mentor|direct] [--engram] [--context7] [--codegraph] [--all]
 ```
 
 | Flag | Efecto |
 |---|---|
 | `--dry-run` | Muestra el diff; no escribe nada. |
+| `--scope global\|workspace` | `workspace` escribe instrucciones, skills, subagentes y hooks en el proyecto actual (`.claude/`, `.gemini/`…) en vez de en tu carpeta personal; solo para claude-code, gemini-cli, qwen-code, kimi y generic. Los backups y el registro de instalación siguen siendo globales. |
 | `--yes` | Aplica. Sin `--yes` ni `--dry-run`, se niega a escribir. |
 | `--force` | Sobrescribe lo editado a mano (con backup). |
-| `--agent` | Lista separada por comas. Por defecto `claude-code`. Válidos: `claude-code, opencode, codex, gemini-cli, kilocode, qwen-code, windsurf, generic`. |
+| `--agent` | Lista separada por comas. Por defecto `claude-code`; `auto` = claude-code más los agentes detectados en PATH. Válidos: `claude-code, opencode, codex, gemini-cli, cursor, kilocode, qwen-code, windsurf, copilot-cli, generic`. |
 | `--no-hooks` | No instala hooks. Con `--no-permissions` tampoco toca `settings.json`. |
 | `--no-permissions` | No siembra la deny-list. |
 | `--engram` | Además, ejecuta `engram setup claude-code` (requiere `engram`). |
 | `--context7` | Además, registra Context7 en Claude Code (ver [Componentes opcionales](#componentes-opcionales-engram-context7-codegraph)). |
 | `--codegraph` | Además, instala y registra CodeGraph. |
 | `--all` | Los tres opcionales a la vez: `engram`, `context7` y `codegraph`. |
+| `--persona` | Tono del agente: `neutral` (por defecto, no añade nada), `mentor` (explica el porqué, riguroso y cercano) o `direct` (resultado primero, sin relleno). Se escribe como un segundo bloque gestionado (`id=persona`) y `uninstall` lo retira. |
+| `--preset` | `minimal`: solo bloque de instrucciones (sin hooks, deny-list ni skills). `standard` (por defecto): hooks, deny-list y skills. `full`: `standard` + `--all`. |
 
+- Registra lo instalado (agentes, preset, componentes) en `~/.v-ia/install.json`; `doctor` lo muestra.
 - Es **idempotente**: una segunda ejecución dice "nada que cambiar".
 - Antes de escribir crea un backup en `~/.v-ia/backups/<fecha>/` con un `manifest.json`.
 - Si una escritura falla a mitad, **hace rollback** automático.
@@ -134,7 +138,9 @@ Si un archivo solo contenía nuestro bloque, se borra.
 v-ia update --check      # ¿hay versión nueva?
 v-ia update              # descarga, verifica y reemplaza (pregunta antes)
 ```
-Baja `v-ia_<so>_<arquitectura>.tar.gz` de la última release, comprueba su `sha256` contra `checksums.txt` y solo entonces reemplaza el binario (atómico, misma carpeta). Si el hash no coincide, aborta sin tocar nada. Además, si tienes la CLI `gh`, verifica la **atestación Sigstore** de la release (la construyó el workflow de este repositorio): `v-ia update --no-attestation` la omite para releases que no la tengan. Sin `gh` avisa de que solo se comprobó el hash. Validaciones adicionales: la etiqueta debe ser `vX.Y.Z`, `checksums.txt` no puede contradecirse, el binario extraído tiene tope de 200 MB y se hace `fsync` antes del reemplazo. Tras actualizar, ejecuta `v-ia sync --yes`. Falla con un mensaje claro si no hay releases o el repositorio es privado. `upgrade` es el camino alternativo desde el código fuente.
+Baja `v-ia_<so>_<arquitectura>.tar.gz` de la última release, comprueba su `sha256` contra `checksums.txt` y solo entonces reemplaza el binario (atómico, misma carpeta). Si el hash no coincide, aborta sin tocar nada. Además, si tienes la CLI `gh`, verifica la **atestación Sigstore** de la release (la construyó el workflow de este repositorio): `v-ia update --no-attestation` la omite para releases que no la tengan. Sin `gh` avisa de que solo se comprobó el hash. Validaciones adicionales: la etiqueta debe ser `vX.Y.Z`, `checksums.txt` no puede contradecirse, el binario extraído tiene tope de 200 MB y se hace `fsync` antes del reemplazo. Tras actualizar, ejecuta `v-ia sync --yes`. Falla con un mensaje claro si no hay releases o el repositorio es privado. `upgrade` es el camino alternativo desde el código fuente. `--channel beta` (o `V_IA_CHANNEL=beta`) incluye prereleases; el canal por defecto es `stable`.
+
+**Firma minisign (opcional, activada por clave)**: si hay clave pública configurada, `update` exige `checksums.txt.minisig` y rechaza la descarga si falta o no verifica (acepta una o dos claves separadas por coma, para rotar). Se configura al compilar (`-X v-ia/internal/update.MinisignPublicKeys=…`; el workflow lo toma de la variable de repo `MINISIGN_PUBLIC_KEYS`) o en tiempo de ejecución con `V_IA_MINISIGN_PUBKEY`. Para firmar las releases: `minisign -G -W` (clave sin contraseña), guarda la secreta en el secreto de repo `MINISIGN_SECRET_KEY` y la pública en la variable `MINISIGN_PUBLIC_KEYS`; `release.yml` firma y sube `checksums.txt.minisig` solo si el secreto existe. Sin clave, `update` avisa de que la firma no se verificó.
 
 ### `v-ia upgrade`
 
@@ -150,6 +156,13 @@ v-ia restore --list              # backups, del más antiguo al más reciente
 v-ia restore latest --yes        # vuelve al estado previo al último cambio
 ```
 Restaura también los archivos que `uninstall` borró.
+
+**Límites del rollback** (iguales a los de gentle-ai):
+- Cada archivo se restaura de forma atómica (temporal + renombrado), pero la restauración completa no lo es: si una entrada falla, las anteriores quedan restauradas y las siguientes no.
+- El rollback automático de `install`/`sync` no comprueba qué cambió entretanto ni usa bloqueos: una edición tuya a un archivo respaldado durante la ejecución puede sobrescribirse. No edites la configuración del agente mientras corre.
+- Solo cubre archivos de configuración; no desinstala paquetes (`brew`, `apt`, `pacman`, `npm`) que instalaran los componentes opcionales.
+
+**Retención**: tras cada cambio se conservan los 5 backups más recientes sin fijar y se borran los demás. `v-ia restore --pin [dir]` fija un backup (por defecto el último) para que nunca se pode; `--unpin` lo libera; `--list` marca los fijados con `[pinned]`.
 
 ### `v-ia doctor`
 
@@ -183,14 +196,15 @@ En modo lectura guarda una huella del árbol (`guard start`).
 
 | Acción | Se bloquea cuando |
 |---|---|
-| `Edit`, `Write`, `MultiEdit`, `NotebookEdit` | Modo lectura; o modo seguimiento sin ninguna ficha en `odd/tasks/` (crear la ficha sí se permite). |
+| `Edit`, `Write`, `MultiEdit`, `NotebookEdit` | Modo lectura; o modo seguimiento sin ninguna ficha en `odd/tasks/` (crear la ficha sí se permite); o [TDD estricto](#tdd-estricto-v-ia-tdd) activo, el archivo es código de producción y no hay ninguna prueba nueva o modificada. |
+| `Bash` que escribe archivos | Solo en modo lectura: redirecciones (`>`, `>>`), `sed -i`, `tee`, `mv`, `cp`, `rm`, `touch`, `mkdir`, `git apply/restore/checkout --`… Las escrituras en `/tmp` y `/dev/null` no cuentan, pero solo si todos los argumentos son rutas bajo `/tmp`: `cp /tmp/x main.go` o `cp main.go /tmp/x` se bloquean (no se distingue origen de destino). Es una heurística: prefiere un falso positivo a dejar pasar una edición. |
 | `Bash` con comando destructivo | Siempre: `rm -rf` de `/`, `~`, `$HOME`, `.`, `..`; `git push --force/-f`; `git reset --hard`; `git clean -f`; `chmod -R 777`. |
 | `Bash` con `git commit/push/tag`, `gh pr create/merge`, `gh release create` | No lo pediste en tu último mensaje; **o** RDD está activo, el proyecto tiene comprobaciones y no hay recibo válido; **o** el riesgo es alto y falta el visto bueno del revisor. |
 
 ### `Stop` — comprueba antes de dejar cerrar
 
 Bloquea el cierre (una vez por turno, para evitar bucles) si:
-- estás en modo lectura y **hay archivos cambiados** (lista cuáles; así se detecta un `sed -i` desde Bash);
+- estás en modo lectura y **hay archivos cambiados** (lista cuáles; red de seguridad por si una escritura por Bash esquivó la heurística de `PreToolUse`);
 - alguna ficha de `odd/tasks/` no valida (`task check`).
 
 ### `SessionStart` — contexto al abrir sesión
@@ -320,9 +334,21 @@ Comprueba que hay un recibo `pass` para el árbol actual (y, con RDD activo y ri
 
 ---
 
+## TDD estricto (`v-ia tdd`)
+
+```
+v-ia tdd on | off | status
+```
+
+Con `on`, el hook `PreToolUse` bloquea editar **código de producción** (`.go`, `.py`, `.js/.ts`, `.rs`, `.java`…) mientras el árbol de trabajo no tenga ninguna prueba nueva o modificada (según `git status`). Los archivos de pruebas (`*_test.go`, `*.test.ts`, `*.spec.js`, `tests/`, `test_*.py`…), la documentación y la configuración nunca se bloquean. Sin git no se aplica. Se guarda en `.v-ia/tdd` del proyecto y vale para Claude Code y OpenCode (los agentes con hooks).
+
+Es una puerta mínima, no una prueba de que la prueba falle: ejecutarla y verla en rojo sigue siendo trabajo del agente (skill `go-testing`).
+
+---
+
 ## Skills y registro
 
-Instaladas en `~/.claude/skills/` (solo Claude Code):
+Se instalan en la carpeta de skills de cada agente que las admite (`~/.claude/skills/`, `~/.config/opencode/skills/`, `~/.codex/skills/`…); `--preset minimal` las omite.
 
 | Skill | Para qué |
 |---|---|
@@ -338,6 +364,11 @@ Instaladas en `~/.claude/skills/` (solo Claude Code):
 | `skill-creator` | Crear o mejorar skills (frontmatter, descripción activable, reglas de V-IA). |
 | `comment-writer` | Comentarios de revisión y respuestas claras, con `ruta:línea` y separando lo bloqueante. |
 | `rdd-defect-workflow` | Defectos con evidencia: reproducir (RED), causa raíz, arreglo mínimo, comprobar (GREEN). |
+| `go-testing` | Pruebas en Go: tabla/subtests, entorno aislado, `-race`, evidencia con `-count=1`. |
+| `skill-improver` | Mejorar una skill a partir de un fallo reproducido (descripción, cuerpo, una cosa a la vez). |
+| `systemic-issue-triage` | Decidir si un fallo es puntual, sistémico o estructural antes de parchear. |
+| `cognitive-doc-design` | Documentación pensada para quien lee: respuesta primero, un propósito por documento, límites visibles. |
+| `skill-registry` | Descubrir y elegir skills con `.atl/skill-registry.md`; cargar solo la que se usa. |
 
 ### Registro de skills
 
@@ -475,13 +506,22 @@ Convive con RDD sin solaparse: RDD emite el recibo de entrega; `standards` revis
 | Agente | Archivo que escribe | Cumplimiento | Verificado |
 |---|---|---|---|
 | claude-code | `~/.claude/CLAUDE.md` + `settings.json` + skills + subagente | **Hooks (bloqueo)** | E1, E2, E3, E7 con Claude real |
-| opencode | `$XDG_CONFIG_HOME/opencode/AGENTS.md` (por defecto `~/.config/opencode/`) | Instrucciones | E1–E4 con OpenCode 1.19.5 |
-| codex | `$CODEX_HOME/AGENTS.md` (por defecto `~/.codex/`) | Instrucciones | No |
-| gemini-cli | `~/.gemini/GEMINI.md` | Instrucciones | No |
+| opencode | `$XDG_CONFIG_HOME/opencode/AGENTS.md` (por defecto `~/.config/opencode/`) + `plugins/v-ia.js` + skills | **Plugin (bloqueo)** | E1–E5 con OpenCode 1.19.6 |
+| codex | `$CODEX_HOME/AGENTS.md` + `hooks.json` (`PreToolUse`, `UserPromptSubmit`) + skills | Hooks (**sin verificar** con Codex real) | No |
+| gemini-cli | `~/.gemini/GEMINI.md` + `settings.json` (hooks `BeforeTool`/`BeforeAgent`) + skills | Hooks (**sin verificar** con Gemini CLI real) | No |
+| cursor | `~/.cursor/hooks.json` (`preToolUse`, `beforeSubmitPrompt`) + skills; sin archivo de instrucciones | Hooks (**sin verificar** con Cursor real) | No |
 | kilocode | `$XDG_CONFIG_HOME/kilo/AGENTS.md` | Instrucciones | No |
 | qwen-code | `~/.qwen/QWEN.md` | Instrucciones | No |
 | windsurf | `~/.codeium/windsurf/memories/global_rules.md` | Instrucciones | No |
+| copilot-cli | `$COPILOT_HOME/copilot-instructions.md` (por defecto `~/.copilot/`) | Instrucciones | No |
 | generic | `AGENTS.md` del directorio actual | Instrucciones | No |
+
+**OpenCode:** `v-ia install --agent opencode` escribe `~/.config/opencode/plugins/v-ia.js`, un plugin que llama a `v-ia hook` en `chat.message` (clasifica tu petición) y `tool.execute.before` (lanza un error que **bloquea** la herramienta). Aplican las mismas reglas que en Claude Code: edición en modo lectura, comandos destructivos, entrega no pedida, TDD estricto. Falla abierto: si `v-ia` no responde, no bloquea. No hay equivalente del hook `Stop`.
+
+**Gemini CLI, Codex y Cursor (experimental):** `install` fusiona en la configuración de hooks de cada agente (`~/.gemini/settings.json`, `$CODEX_HOME/hooks.json`, `~/.cursor/hooks.json`) entradas que llaman a `v-ia hook`, conservando las tuyas; `uninstall` retira solo las de V-IA. Los eventos y herramientas de cada agente se traducen a los de Claude Code (`BeforeTool`/`PreToolUse`/`preToolUse`, `write_file`/`replace`/`apply_patch`/`Write`/`Delete`, `run_shell_command`/`Bash`/`Shell`). Se escribieron según la documentación oficial de cada agente. **Verificado con el agente real** (clave API falsa, HOME temporal): el hook de petición de Gemini CLI 0.71.1 (`BeforeAgent`) y el de Codex 0.172.0 (`UserPromptSubmit`) ejecutan `v-ia hook` con su carga real y clasifican la petición; esa prueba destapó que Codex marca el hook como fallido si recibe texto plano, por eso con Codex (se detecta por `turn_id`) V-IA responde con JSON. **No verificado con el agente real**: los hooks previos a la herramienta (`BeforeTool`, `PreToolUse`, `preToolUse`; necesitan que el modelo responda) y todo Cursor (no hay CLI instalable aquí). Notas:
+- **Codex** exige revisar y confiar los hooks no gestionados (`/hooks` en su CLI; para automatización puntual existe `--dangerously-bypass-hook-trust`, que solo usé en una carpeta temporal con mis propios hooks) y avisa de que PreToolUse "no intercepta todas las llamadas": es una barrera útil, no una frontera completa. La edición llega como `apply_patch`, sin ruta de archivo; en modo lectura se bloquea igual.
+- **Cursor** no tiene archivo global de instrucciones documentado: solo hooks (y skills). No existe un hook previo a la edición distinto de `preToolUse`; los fallos de hook "abren" salvo `failClosed`. V-IA responde con el JSON que Cursor espera.
+- **Gemini CLI**: su documentación advierte que ha sido sustituido por Antigravity CLI; los hooks pueden quedar obsoletos.
 
 Los agentes **sin hooks** reciben un bloque distinto que no promete bloqueos ni skills, y que les pide ejecutar por su cuenta `v-ia guard start/check`, `task check` y `review check`.
 
@@ -494,7 +534,8 @@ No soportados todavía: Cursor, VS Code Copilot, Kiro, Kimi, Antigravity y el re
 | Comando | Qué hace |
 |---|---|
 | `v-ia` | TUI de instalación (requiere terminal interactivo). |
-| `v-ia version` | Muestra la versión. |
+| `v-ia help` | Resumen de comandos (también `--help`, `-h`). |
+| `v-ia version` | Muestra la versión (también `--version`, `-v`). |
 | `v-ia install [flags]` | Instala/actualiza bloques, hooks, skills, subagente (ver flags arriba). |
 | `v-ia sync [flags]` | Actualiza solo lo ya instalado. |
 | `v-ia uninstall [flags]` | Retira lo instalado (conserva lo editado a mano). |
@@ -503,8 +544,12 @@ No soportados todavía: Cursor, VS Code Copilot, Kiro, Kimi, Antigravity y el re
 | `v-ia restore --list` / `restore latest --yes` | Backups y restauración. |
 | `v-ia doctor` | Diagnóstico de solo lectura. |
 | `v-ia mode [status\|read\|edit\|tracking]` | Modo del proyecto actual. |
+| `v-ia tdd [status\|on\|off]` | TDD estricto del proyecto actual. |
+| `v-ia telemetry [status\|on\|off\|show\|reset]` | Recuento **local** (sin red, apagado por defecto) de qué bloquea V-IA: `block:read-mode`, `block:delivery`, `block:tdd`… En `~/.v-ia/telemetry.json`. |
+| `v-ia bench [-n N]` | Mide cuánto tarda el hook en decidir cada tipo de acción (mediana, p95, máximo): la sobrecarga que V-IA añade a cada llamada de herramienta. |
 | `v-ia task new <feature> [--request "…"]` | Crea la ficha en `odd/tasks/`. |
 | `v-ia task check` | Valida todas las fichas. |
+| `v-ia task verify [--strict]` | Contrasta la columna "Comando" de la Evidencia con lo que ejecutó `review check` (necesita recibo vigente; ignora banderas como `-count=1`). Avisa de las tareas `[x]` sin respaldo; con `--strict` devuelve 1. Una evidencia legítima de otro tipo (prueba manual, e2e) saldrá "sin respaldo". |
 | `v-ia task status` | Estado y avance de cada ficha. |
 | `v-ia guard start` / `guard check` | Huella del árbol y diff (detecta cambios en una consulta de solo lectura). |
 | `v-ia review check` | Comprobaciones + riesgo + recibo. |
@@ -517,7 +562,7 @@ No soportados todavía: Cursor, VS Code Copilot, Kiro, Kimi, Antigravity y el re
 | `v-ia skill-registry list\|refresh` | Índice de skills. |
 | `v-ia hook pre\|prompt\|stop\|session` | **Interno**: lo invocan los hooks; no lo ejecutes a mano. |
 
-No existe `--help` general: esta tabla es la referencia. Códigos de salida: `0` bien, `1` fallo o regla incumplida, `2` uso incorrecto (y, en `hook`, "bloquear").
+`v-ia --help` (o `help`, `-h`) imprime un resumen de esta tabla. Códigos de salida: `0` bien, `1` fallo o regla incumplida, `2` uso incorrecto (y, en `hook`, "bloquear").
 
 ---
 
@@ -529,6 +574,8 @@ No existe `--help` general: esta tabla es la referencia. Códigos de salida: `0`
 |---|---|
 | `~/.v-ia/backups/<fecha>/` | `manifest.json` + copia de cada archivo antes de tocarlo. |
 | `~/.v-ia/config.json` | Interruptor global de RDD. |
+| `~/.v-ia/telemetry`, `telemetry.json` | Interruptor y contadores del recuento local (ver `v-ia telemetry`). |
+| `~/.v-ia/install.json` | Qué instaló V-IA: versión, preset, agentes y componentes. |
 
 **Por proyecto** (conviene añadir `.v-ia/` y `.atl/` a tu `.gitignore`; `odd/tasks/` sí se versiona)
 
@@ -538,6 +585,7 @@ No existe `--help` general: esta tabla es la referencia. Códigos de salida: `0`
 | `.v-ia/guard.json` | Huella del árbol para `guard check`. |
 | `.v-ia/receipt.json` | Último recibo: comprobaciones, candidato, riesgo y veredicto del revisor. |
 | `.v-ia/checks.txt` | (opcional, tuyo) comprobaciones de `review check`. |
+| `.v-ia/tdd` | (opcional) `on` para TDD estricto en este proyecto. |
 | `.v-ia/review-mode` | (opcional) `off` para apagar RDD en este proyecto. |
 | `.atl/skill-registry.md` | Índice de skills. |
 | `odd/tasks/*.md` | Fichas de seguimiento. |
@@ -551,6 +599,7 @@ No existe `--help` general: esta tabla es la referencia. Códigos de salida: `0`
 | `V_IA_HOME` | Sustituye a `$HOME`. **Úsala para probar sin tocar tu configuración real.** |
 | `XDG_CONFIG_HOME` | Cambia dónde se buscan OpenCode y Kilo. |
 | `CODEX_HOME` | Cambia dónde se busca la configuración de Codex. |
+| `V_IA_THEME` | Paleta de la terminal interactiva: `violet` (por defecto), `rose`, `ocean` o `mono`. |
 | `V_IA_SRC` | Repo por defecto de `upgrade`. |
 | `V_IA_BIN` | (scripts e2e) ruta del binario a probar. |
 | `OC_MODEL` | (script e2e de OpenCode) modelo a usar. |
@@ -632,3 +681,7 @@ install.sh           instalador de una línea (descarga la release)
 **Añadir una regla de bloqueo**: `internal/hook/hook.go` (`preTool`, `dangerRe`) con un test en `hook_test.go`.
 
 Antes de subir cambios: `go build ./... && go vet ./... && go test ./...` y, si tocaste hooks o instrucciones, los scripts `e2e`.
+
+### Guía de estilo de skills
+
+Cada `core/skills/<nombre>/SKILL.md` debe llevar frontmatter completo (`name` igual al directorio, `description` en una línea de ≤250 caracteres con el disparador primero, `license`, `metadata.author`, `metadata.version`) y un cuerpo de ≤700 palabras; lo largo va en `assets/` o `references/`. `core/skills_style_test.go` lo hace cumplir (equivalente a la guía de estilo de gentle-ai).

@@ -142,3 +142,109 @@ func TestNoHooksButPermissionsDoesNotInstallHooks(t *testing.T) {
 		t.Fatalf("--no-hooks debe sembrar solo la deny-list:\n%s", b)
 	}
 }
+
+func TestOpenCodeGetsPluginAndSkills(t *testing.T) {
+	o := opts(t, "opencode")
+	apply(t, mustPlan(t, Install, o), o)
+	xdg := os.Getenv("XDG_CONFIG_HOME")
+	plug, err := os.ReadFile(filepath.Join(xdg, "opencode", "plugins", "v-ia.js"))
+	if err != nil {
+		t.Fatalf("falta el plugin: %v", err)
+	}
+	if !strings.Contains(string(plug), `"/usr/bin/v-ia"`) || strings.Contains(string(plug), "__V_IA_EXE__") {
+		t.Fatal("el plugin no recibió la ruta del binario")
+	}
+	if !strings.Contains(string(plug), "// v-ia:managed-file sha256=") {
+		t.Fatal("el plugin debe llevar una marca de comentario JS, no HTML")
+	}
+	for _, n := range skillNames {
+		if _, err := os.Stat(filepath.Join(xdg, "opencode", "skills", n, "SKILL.md")); err != nil {
+			t.Errorf("falta la skill %s en OpenCode: %v", n, err)
+		}
+	}
+	// idempotente y desinstalable sin dejar nada
+	if p := mustPlan(t, Install, o); len(p.Changes()) != 0 {
+		t.Fatalf("segunda instalación debía ser nula: %d cambios", len(p.Changes()))
+	}
+	apply(t, mustPlan(t, Uninstall, o), o)
+	if _, err := os.Stat(filepath.Join(xdg, "opencode", "plugins", "v-ia.js")); err == nil {
+		t.Fatal("uninstall debía retirar el plugin")
+	}
+}
+
+func TestNoHooksSkipsPluginAndNoSkillsSkipsSkills(t *testing.T) {
+	o := opts(t, "opencode")
+	o.Hooks, o.NoSkills = false, true
+	apply(t, mustPlan(t, Install, o), o)
+	xdg := os.Getenv("XDG_CONFIG_HOME")
+	if _, err := os.Stat(filepath.Join(xdg, "opencode", "plugins", "v-ia.js")); err == nil {
+		t.Fatal("sin hooks no hay plugin")
+	}
+	if _, err := os.Stat(filepath.Join(xdg, "opencode", "skills")); err == nil {
+		t.Fatal("NoSkills no debe instalar skills")
+	}
+}
+
+func TestSkillsInstalledForEveryAgentThatSupportsThem(t *testing.T) {
+	o := opts(t, "codex", "gemini-cli", "kilocode", "qwen-code", "windsurf", "copilot-cli")
+	p := mustPlan(t, Install, o)
+	n := 0
+	for _, a := range p.Actions {
+		if strings.HasSuffix(a.Path, "SKILL.md") {
+			n++
+		}
+	}
+	if n != 6*len(skillNames) {
+		t.Fatalf("esperaba %d skills, hay %d", 6*len(skillNames), n)
+	}
+}
+
+func TestGeminiHooksAndPersonaRoundTrip(t *testing.T) {
+	o := opts(t, "gemini-cli")
+	o.Persona = "mentor"
+	if err := os.MkdirAll(filepath.Join(o.Home, ".gemini"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pre := `{"theme":"dark"}` + "\n"
+	sp := filepath.Join(o.Home, ".gemini", "settings.json")
+	if err := os.WriteFile(sp, []byte(pre), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, mustPlan(t, Install, o), o)
+	b, _ := os.ReadFile(sp)
+	if !strings.Contains(string(b), `"BeforeTool"`) || !strings.Contains(string(b), `"theme"`) {
+		t.Fatalf("settings de Gemini: %s", b)
+	}
+	md, _ := os.ReadFile(filepath.Join(o.Home, ".gemini", "GEMINI.md"))
+	if !strings.Contains(string(md), "id=odd") || !strings.Contains(string(md), "id=persona") {
+		t.Fatalf("GEMINI.md debe llevar los bloques odd y persona:\n%s", md)
+	}
+	if p := mustPlan(t, Install, o); len(p.Changes()) != 0 {
+		t.Fatalf("segunda instalación debía ser nula: %d cambios", len(p.Changes()))
+	}
+	apply(t, mustPlan(t, Uninstall, o), o)
+	if b, _ := os.ReadFile(sp); strings.Contains(string(b), "BeforeTool") || !strings.Contains(string(b), `"theme"`) {
+		t.Fatalf("uninstall debe quitar solo los hooks: %s", b)
+	}
+	if _, err := os.Stat(filepath.Join(o.Home, ".gemini", "GEMINI.md")); err == nil {
+		t.Fatal("uninstall debía borrar GEMINI.md que creamos (odd + persona)")
+	}
+}
+
+func TestBrokenAgentConfigDoesNotAbortInstall(t *testing.T) {
+	o := opts(t, "claude-code", "gemini-cli")
+	_ = os.MkdirAll(filepath.Join(o.Home, ".gemini"), 0o755)
+	bad := filepath.Join(o.Home, ".gemini", "settings.json")
+	_ = os.WriteFile(bad, []byte("{ // comentario\n}"), 0o644)
+	p := mustPlan(t, Install, o)
+	if len(p.Warnings) != 1 {
+		t.Fatalf("debía avisar de la configuración inválida de Gemini: %v", p.Warnings)
+	}
+	apply(t, p, o)
+	if b, _ := os.ReadFile(bad); string(b) != "{ // comentario\n}" {
+		t.Fatal("no debe tocar la configuración inválida")
+	}
+	if _, err := os.Stat(filepath.Join(o.Home, ".claude", "settings.json")); err != nil {
+		t.Fatal("el resto de agentes debía instalarse")
+	}
+}

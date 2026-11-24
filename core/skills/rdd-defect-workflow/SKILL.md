@@ -1,12 +1,17 @@
 ---
 name: rdd-defect-workflow
-description: Corregir un defecto con evidencia (reproducir, arreglar, comprobar). Úsala cuando el usuario reporte un bug o un fallo a corregir.
+description: Corregir un defecto con evidencia (reproducir, causa raíz, arreglo mínimo, comprobar). Úsala al arreglar un bug reportado o una regresión.
+license: "Apache-2.0"
+metadata:
+  author: "v-ia"
+  version: "1.0"
 ---
-# Defecto con evidencia
+# Defectos con evidencia
 
-1. **Reproduce primero.** Escribe o ejecuta una comprobación que falle por la causa descrita y guarda su salida literal (RED). Si no puedes reproducirlo, dilo; no arregles a ciegas.
-2. **Causa raíz.** Busca por qué ocurre, no solo dónde se ve. Anota la hipótesis y cómo la comprobaste; descarta las que no sobrevivieron.
-3. **Arreglo mínimo** que cubra la causa, sin refactors ajenos. Si el mismo error puede estar en otros sitios, búscalos y di cuáles tocaste.
-4. **Comprueba (GREEN):** la reproducción pasa y el resto de pruebas sigue en verde. Registra comando y resultado en `## Evidencia` de la ficha (en trabajos pequeños, en tu informe).
-5. `v-ia review check` antes de reportar. Un defecto en seguridad, datos o contratos compartidos es riesgo alto: pide el revisor.
-6. Informa con honestidad: qué quedó verificado, qué no y qué podría reaparecer. Commit o push solo si el usuario lo pide.
+1. **Reproduce primero** con un caso real (RED): un test o comando que falle por la razón correcta. Si no lo reproduces en la base limpia, dilo y no "arregles" a ciegas. El mecanismo que afirma el reporte es hipótesis; solo el síntoma es evidencia.
+2. **Causa raíz** con `ruta:línea`. ¿Dónde más ocurre? Si es sistémico, ve a `systemic-issue-triage`. Un invariante causal por cambio, con rollback independiente.
+3. **Pronóstico**: estima las líneas antes de editar; si superan ~400, planifica `chained-pr` o `work-unit-commits`.
+4. **Arreglo mínimo que reduzca el sistema**: borrar o relajar suele ganar a añadir estado, flags o puertas. Si el arreglo es "nombrar la salida ejecutable", es un arreglo de mensaje: ejecuta el comando impreso para comprobarlo.
+5. **Comprueba (GREEN)**: la prueba nueva, la de comportamiento previo del comando tocado y la suite. "Verde en tests pero roto en producción": sospecha que el test fue enseñado a coincidir; ejecuta el binario real.
+6. Inventario de los flujos del usuario que toca el cambio, con al menos un control negativo cada uno. Un proxy sintético no prueba otro entorno.
+7. Cierra con `Risk:` y un informe: defecto, causa, invariante, pruebas, rollback y decisiones que no eran tuyas. Commit/PR solo a petición.

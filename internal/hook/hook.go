@@ -40,6 +40,7 @@ type Input struct {
 	Tool           string `json:"tool_name"`
 	Prompt         string `json:"prompt"`
 	StopHookActive bool   `json:"stop_hook_active"`
+	TurnID         string `json:"turn_id"` // solo Codex lo envía
 	ToolInput      struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
@@ -100,6 +101,9 @@ func Classify(prompt string) (mode string, delivery bool) {
 	return ModeEdit, delivery
 }
 
+// protectedRe: estado que gestiona v-ia y que un agente no debe reescribir (recibo, modo RDD, estado, TDD).
+var protectedRe = regexp.MustCompile(`(?:^|[^\w.-])\.v-ia[/\\](receipt\.json|review-mode|state\.json|guard\.json|tdd)\b`)
+
 func isEditTool(t string) bool {
 	switch t {
 	case "Edit", "Write", "MultiEdit", "NotebookEdit":
@@ -113,6 +117,15 @@ func hasTaskFile(root string) bool {
 	return len(m) > 0
 }
 
+func relTo(root, p string) string {
+	if filepath.IsAbs(p) {
+		if r, err := filepath.Rel(root, p); err == nil {
+			return r
+		}
+	}
+	return p
+}
+
 func underTasks(root, p string) bool {
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(root, p)
@@ -123,6 +136,7 @@ func underTasks(root, p string) bool {
 
 // Handle aplica las reglas ODD al evento recibido.
 func Handle(in Input) Result {
+	normalize(&in)
 	root := in.CWD
 	if root == "" {
 		root, _ = os.Getwd()
@@ -188,6 +202,9 @@ func preTool(root string, st State, in Input) Result {
 		if p == "" {
 			p = in.ToolInput.NotebookPath
 		}
+		if protectedRe.MatchString(filepath.ToSlash(p)) {
+			return Result{Block: true, Msg: "V-IA/seguridad: el estado de revisión y de modo (.v-ia/receipt.json, review-mode, state.json…) lo gestiona v-ia; no lo edites a mano. Usa los comandos `v-ia review|mode|tdd`."}
+		}
 		switch st.Mode {
 		case ModeRead:
 			return Result{Block: true, Msg: "V-IA/ODD: modo lectura, la petición no autoriza editar. Responde sin modificar archivos."}
@@ -196,8 +213,17 @@ func preTool(root string, st State, in Input) Result {
 				return Result{Block: true, Msg: "V-IA/ODD: trabajo de seguimiento sin ficha. Crea odd/tasks/<feature>.md (v-ia task new <feature>) antes de editar."}
 			}
 		}
+		if msg := tddGate(root, relTo(root, p)); msg != "" {
+			return Result{Block: true, Msg: msg}
+		}
 	case in.Tool == "Bash":
 		cmd := in.ToolInput.Command
+		if protectedRe.MatchString(cmd) && writesFiles(cmd) && !isVIACommand(cmd) {
+			return Result{Block: true, Msg: "V-IA/seguridad: el comando modifica el estado que gestiona v-ia (.v-ia/receipt.json, review-mode, state.json…). Usa los comandos `v-ia review|mode|tdd`."}
+		}
+		if st.Mode == ModeRead && writesFiles(cmd) {
+			return Result{Block: true, Msg: "V-IA/ODD: modo lectura, el comando modifica archivos (redirección, sed -i, tee, mv, rm, git apply…). Responde sin modificar nada."}
+		}
 		for _, re := range dangerRe {
 			if re.MatchString(cmd) {
 				return Result{Block: true, Msg: "V-IA/seguridad: comando destructivo bloqueado (rm -rf de raíz/HOME/., push --force, reset --hard, clean -f, chmod -R 777). Pídele al usuario que lo ejecute él mismo."}
@@ -250,7 +276,16 @@ func stop(root string, st State, in Input) Result {
 		}
 	}
 	if len(msgs) == 0 {
+		if m := reviewReminder(root); m != "" {
+			return Result{Block: true, Msg: m}
+		}
 		return Result{}
 	}
 	return Result{Block: true, Msg: "V-IA/ODD: no cierres todavía.\n" + strings.Join(msgs, "\n")}
+}
+
+// isVIACommand indica si el comando es una invocación directa de v-ia (que sí puede tocar su estado).
+func isVIACommand(cmd string) bool {
+	f := strings.Fields(strings.TrimSpace(cmd))
+	return len(f) > 0 && (f[0] == "v-ia" || strings.HasSuffix(f[0], "/v-ia")) && !strings.ContainsAny(cmd, ";&|`$(")
 }

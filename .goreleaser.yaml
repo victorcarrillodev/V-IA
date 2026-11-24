@@ -7,6 +7,8 @@ builds:
     env: [CGO_ENABLED=0]
     goos: [linux, darwin]
     goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X v-ia/internal/update.MinisignPublicKeys={{ .Env.MINISIGN_PUBLIC_KEYS }}
 archives:
   - formats: [tar.gz]
     name_template: "v-ia_{{ .Os }}_{{ .Arch }}"

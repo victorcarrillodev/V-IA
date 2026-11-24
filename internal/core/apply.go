@@ -94,6 +94,7 @@ func Apply(p Plan, backupRoot string, now time.Time) (string, error) {
 			return dir, errors.Join(fmt.Errorf("escribiendo %s: %w (rollback aplicado)", a.Path, err), rbErr)
 		}
 	}
+	_, _ = Prune(backupRoot, KeepBackups) // la poda es best-effort: no invalida el Apply
 	return dir, nil
 }
 

@@ -23,12 +23,29 @@ type Action struct {
 }
 
 // Plan es la lista de acciones; construirlo no escribe nada (dry-run).
-type Plan struct{ Actions []Action }
+type Plan struct {
+	Actions []Action
+	// Warnings son avisos no fatales (p. ej. un agente cuya configuración no se pudo fusionar y se omitió).
+	Warnings []string
+}
 
 // BuildPlan calcula qué cambiaría en disco sin tocarlo.
 func BuildPlan(targets []Target, force bool) (Plan, error) {
 	var p Plan
+	idx := map[string]int{} // ruta -> posición de su acción: varios bloques en un archivo se acumulan
 	for _, t := range targets {
+		if i, ok := idx[t.Path]; ok {
+			a := &p.Actions[i]
+			nw, st := Upsert(a.New, true, t.Block, force)
+			a.New = nw
+			switch {
+			case st == Conflict:
+				a.Status = Conflict
+			case st != Unchanged && a.Status == Unchanged:
+				a.Status = st
+			}
+			continue
+		}
 		data, err := os.ReadFile(t.Path)
 		exists := err == nil
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -36,6 +53,7 @@ func BuildPlan(targets []Target, force bool) (Plan, error) {
 		}
 		old := string(data)
 		nw, st := Upsert(old, exists, t.Block, force)
+		idx[t.Path] = len(p.Actions)
 		p.Actions = append(p.Actions, Action{Path: t.Path, Status: st, Existed: exists, Old: old, New: nw})
 	}
 	return p, nil

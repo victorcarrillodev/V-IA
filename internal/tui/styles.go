@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,6 +23,23 @@ var (
 	selStyle   = lipgloss.NewStyle().Foreground(accent).Bold(true)
 	keyStyle   = lipgloss.NewStyle().Foreground(accent)
 )
+
+// V_IA_THEME elige la paleta: violet (por defecto), rose, ocean o mono (sin color de marca).
+func init() {
+	switch os.Getenv("V_IA_THEME") {
+	case "rose":
+		accent = lipgloss.Color("#F472B6")
+	case "ocean":
+		accent = lipgloss.Color("#38BDF8")
+	case "mono":
+		accent = lipgloss.Color("7")
+	default:
+		return
+	}
+	accentText = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	selStyle = accentText
+	keyStyle = lipgloss.NewStyle().Foreground(accent)
+}
 
 func panel(w int) lipgloss.Style {
 	return lipgloss.NewStyle().
