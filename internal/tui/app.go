@@ -341,7 +341,8 @@ func (m Model) onReview(k string) (tea.Model, tea.Cmd) {
 
 // ---------------------------------------------------------------- vista
 
-func (m Model) panelWidth() int { return min(m.w-4, 100) }
+// panelWidth escala con el terminal: ~3/4 del ancho, entre 56 y 110 columnas.
+func (m Model) panelWidth() int { return min(m.w-4, max(56, min(110, m.w*3/4))) }
 
 // headerHeight es lo que ocupan banner + lema; viewLines lo descuenta del área de contenido.
 func (m Model) headerHeight() int {
@@ -407,7 +408,12 @@ func (m Model) View() string {
 	box := panel(m.panelWidth()).Render(accentText.Render(m.title()) + "\n\n" + strings.Join(lines, "\n"))
 	box = lipgloss.PlaceHorizontal(m.w, lipgloss.Center, box)
 	foot := lipgloss.PlaceHorizontal(m.w, lipgloss.Center, truncateVisible(footer, m.w))
-	return m.header() + "\n" + box + "\n" + foot
+	out := m.header() + "\n" + box + "\n" + foot
+	// centrado vertical: el sobrante del terminal se reparte arriba y abajo
+	if used := lipgloss.Height(out); used < m.h {
+		out = strings.Repeat("\n", (m.h-used)/2) + out
+	}
+	return out
 }
 
 // truncateVisible recorta por ancho visible sin romper secuencias de color.
