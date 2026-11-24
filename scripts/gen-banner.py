@@ -37,4 +37,20 @@ def main():
         print(name, cols, "x", h, "px =", h // 2, "filas")
 
 
+def kitty():
+    """PNG RGBA grande para terminales con protocolo de gráficos kitty (Ghostty, kitty)."""
+    im = Image.open(SRC).convert("RGB")
+    im = im.crop(im.convert("L").point(lambda v: 255 if v > 40 else 0).getbbox())
+    im = im.resize((900, round(900 * im.height / im.width)), Image.LANCZOS)
+    a = Image.new("L", im.size)
+    px, ap = im.load(), a.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            ap[x, y] = min(255, int(max(px[x, y]) * 1.6))
+    im.putalpha(a)
+    im.save("internal/tui/assets/banner_kitty.png", optimize=True)
+    print("kitty", im.size)
+
+
 main()
+kitty()

@@ -114,7 +114,7 @@ func (m Model) BackupDir() string        { return m.backupDir }
 func (m Model) Results() []doctor.Result { return m.results }
 func (m Model) Op() int                  { return int(m.op) }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd { return func() tea.Msg { uploadKitty(); return nil } }
 
 func (m Model) selectedNames() []string {
 	var n []string

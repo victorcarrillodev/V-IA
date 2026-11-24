@@ -143,6 +143,11 @@ func renderMap(rows [][]pixel, color bool) string {
 
 // Banner dibuja el logo V-AI centrado en el ancho dado.
 func Banner(k bannerKind, width int) string {
+	if k != bannerCompact && kittyEnabled() {
+		if out := kittyPad(k, width); out != "" {
+			return out
+		}
+	}
 	var art string
 	if k == bannerCompact {
 		w := lipgloss.NewStyle().Bold(true).Foreground(colWhite)

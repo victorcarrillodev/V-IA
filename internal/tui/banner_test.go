@@ -41,6 +41,7 @@ func TestBannerMapasConsistentes(t *testing.T) {
 }
 
 func TestBannerConColorUsaColorVerdadero(t *testing.T) {
+	t.Setenv("V_IA_IMAGES", "0")
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
 	out := Banner(bannerLarge, 120)
@@ -53,6 +54,7 @@ func TestBannerConColorUsaColorVerdadero(t *testing.T) {
 }
 
 func TestBannerSinColorSoloFormas(t *testing.T) {
+	t.Setenv("V_IA_IMAGES", "0")
 	lipgloss.SetColorProfile(termenv.Ascii)
 	out := Banner(bannerSmall, 60)
 	if ansiRe.MatchString(out) {
@@ -127,5 +129,19 @@ func TestDumpPantallas(t *testing.T) {
 			mm.proj = loadProject(mm.cwd, mm.home)
 		}
 		t.Logf("\n=== pantalla %d ===\n%s", sc, plain(mm.View()))
+	}
+}
+
+func TestBannerKittyPlaceholders(t *testing.T) {
+	t.Setenv("V_IA_IMAGES", "1")
+	out := Banner(bannerLarge, 120)
+	if got := strings.Count(out, "\U0010EEEE"); got != 104*12 {
+		t.Fatalf("placeholders=%d, quería %d", got, 104*12)
+	}
+	if !strings.Contains(out, "38;5;201m") {
+		t.Fatal("falta el id de imagen en el color")
+	}
+	if up := kittyUpload(); !strings.HasPrefix(up, "\x1b_Ga=T,f=100,U=1") || !strings.Contains(up, "i=201") || !strings.Contains(up, "i=202") {
+		t.Fatal("transmisión kitty inválida")
 	}
 }
