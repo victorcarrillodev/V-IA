@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -217,7 +218,7 @@ func TestHookConservaElExistenteYSeQuita(t *testing.T) {
 func TestHookPropioSeBorraSiQuedaVacio(t *testing.T) {
 	d := gitRepo(t)
 	p, _ := InstallHook(d, "/bin/v-ia", false)
-	if st, _ := os.Stat(p); st.Mode()&0o111 == 0 {
+	if st, _ := os.Stat(p); runtime.GOOS != "windows" && st.Mode()&0o111 == 0 {
 		t.Fatal("el hook debe ser ejecutable")
 	}
 	RemoveHook(d)

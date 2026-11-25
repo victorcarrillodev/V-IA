@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestRestoreByteAByte(t *testing.T) {
 	if string(got) != string(orig) {
 		t.Fatalf("restore no es byte a byte: %q", got)
 	}
-	if st, _ := os.Stat(existente); st.Mode().Perm() != 0o640 {
+	if st, _ := os.Stat(existente); runtime.GOOS != "windows" && st.Mode().Perm() != 0o640 { // Windows no tiene permisos Unix
 		t.Fatal("permisos no restaurados")
 	}
 	if _, err := os.Stat(nuevo); !errors.Is(err, os.ErrNotExist) {

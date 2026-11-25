@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -93,7 +94,7 @@ func TestActualizaYReemplazaAtomicamente(t *testing.T) {
 	}
 	b, _ := os.ReadFile(self)
 	st, _ := os.Stat(self)
-	if string(b) != "BINARIO NUEVO" || st.Mode()&0o111 == 0 {
+	if string(b) != "BINARIO NUEVO" || runtime.GOOS != "windows" && st.Mode()&0o111 == 0 {
 		t.Fatalf("contenido=%q modo=%v", b, st.Mode())
 	}
 	if _, err := os.Stat(self + ".new"); !os.IsNotExist(err) {

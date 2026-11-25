@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -168,7 +169,11 @@ func TestSessionStartRecoversEngramContextAndRefreshesRegistry(t *testing.T) {
 	bin, root := t.TempDir(), t.TempDir()
 	t.Setenv("V_IA_HOME", t.TempDir())
 	fake := "#!/bin/sh\nif [ \"$1\" = context ]; then echo 'decisión previa: usar sqlite'; fi\n"
-	if err := os.WriteFile(filepath.Join(bin, "engram"), []byte(fake), 0o755); err != nil {
+	name := "engram"
+	if runtime.GOOS == "windows" {
+		name, fake = "engram.bat", "@echo off\r\nchcp 65001 >nul\r\nif \"%1\"==\"context\" echo decisión previa: usar sqlite\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -3,12 +3,17 @@ package adapters
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestAntigravityDetectsCLIBinary(t *testing.T) {
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	name := "agy"
+	if runtime.GOOS == "windows" {
+		name = "agy.exe" // LookPath solo encuentra ejecutables con extensión
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
