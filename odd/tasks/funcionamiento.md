@@ -53,3 +53,4 @@ test-runner: go test -count=1 ./...
 ## Log
 - L1: quiero que cubras todos los aspectos que se pueden hacer, no me interesa de momento la distribucion sino el funcionamiento
 - L2: Límites que quedan: hooks previos a la herramienta de Gemini/Codex y todo Cursor sin ejecutar con el agente real (los de petición de Gemini y Codex sí, tras autorización explícita del usuario); pruebas en Windows/macOS solo en CI; firma de releases es distribución. Corrección L3: Codex y Cursor SÍ tienen hooks (lo había descartado sin investigarlo).
+- Risk: ítem 3 (reglas y configuración instaladas en los agentes) e ítem 5 (CI, instalación); anotado el 2026-11-25, a partir de las tareas de la ficha

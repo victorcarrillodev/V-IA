@@ -514,6 +514,7 @@ Convive con RDD sin solaparse: RDD emite el recibo de entrega; `standards` revis
 | qwen-code | `~/.qwen/QWEN.md` | Instrucciones | No |
 | windsurf | `~/.codeium/windsurf/memories/global_rules.md` | Instrucciones | No |
 | copilot-cli | `$COPILOT_HOME/copilot-instructions.md` (por defecto `~/.copilot/`) | Instrucciones | No |
+| antigravity, hermes, kimi, kiro-ide, openclaw, pi, trae-ide, vscode-copilot | Rutas en `docs/capabilities.md` y `v-ia doctor` | Instrucciones | No |
 | generic | `AGENTS.md` del directorio actual | Instrucciones | No |
 
 **OpenCode:** `v-ia install --agent opencode` escribe `~/.config/opencode/plugins/v-ia.js`, un plugin que llama a `v-ia hook` en `chat.message` (clasifica tu petición) y `tool.execute.before` (lanza un error que **bloquea** la herramienta). Aplican las mismas reglas que en Claude Code: edición en modo lectura, comandos destructivos, entrega no pedida, TDD estricto. Falla abierto: si `v-ia` no responde, no bloquea. No hay equivalente del hook `Stop`.
@@ -525,7 +526,7 @@ Convive con RDD sin solaparse: RDD emite el recibo de entrega; `standards` revis
 
 Los agentes **sin hooks** reciben un bloque distinto que no promete bloqueos ni skills, y que les pide ejecutar por su cuenta `v-ia guard start/check`, `task check` y `review check`.
 
-No soportados todavía: Cursor, VS Code Copilot, Kiro, Kimi, Antigravity y el resto de los 17 de Gentle-AI.
+Los agentes marcados con "No" usan rutas tomadas de Gentle-AI que no se han comprobado ejecutando cada agente.
 
 ---
 
@@ -692,7 +693,7 @@ Cada `core/skills/<nombre>/SKILL.md` debe llevar frontmatter completo (`name` ig
 
 ## Reglas del recibo
 
-Cada lente admite un solo veredicto por candidato. Tras un bloqueante hay que cambiar el código, y una corrección que falla las pruebas no devuelve el presupuesto. El recibo recuerda su `--base`. Mientras la revisión siga abierta (o se repita el mismo candidato), `review check` conserva las lentes elegidas y el escalado de riesgo: se pueden añadir lentes, no quitarlas; `review reset` empieza de cero.
+Cada lente admite un solo veredicto por candidato. Tras un bloqueante hay que cambiar el código, y una corrección que falla las pruebas no devuelve el presupuesto. El recibo recuerda su `--base`. Mientras la revisión siga abierta (o se repita el mismo candidato), `review check` conserva las lentes elegidas y el escalado de riesgo: se pueden añadir lentes, no quitarlas; `review reset` empieza de cero. `check`, `ack`, `refute` y `reset` no se solapan en un mismo proyecto: esperan hasta 2 minutos a que termine el que está en curso.
 
 ## Delegación
 

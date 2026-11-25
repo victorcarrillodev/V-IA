@@ -43,7 +43,7 @@ V-IA hace tres cosas:
 | **Hooks (Claude Code) / plugin (OpenCode)** | Bloquean ediciones y escrituras por Bash en modo lectura, commits no pedidos, comandos destructivos y, con `v-ia tdd on`, código sin prueba. Solo Claude Code bloquea además cierres sin evidencia (`Stop`). |
 | **Herramientas** | `task`, `guard`, `review`, `skill-registry`… que el agente (o tú) ejecutan para comprobar. |
 
-Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **17 skills**, un **subagente revisor**, integración opcional con **Engram** (memoria), **Context7** (documentación por MCP) y **CodeGraph** (grafo de código) y una **deny-list** de archivos sensibles.
+Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **18 skills**, un **subagente revisor**, integración opcional con **Engram** (memoria), **Context7** (documentación por MCP) y **CodeGraph** (grafo de código) y una **deny-list** de archivos sensibles.
 
 ## 3. Qué agentes soporta
 
@@ -52,7 +52,7 @@ Además incluye **RDD** (revisión con recibo ligado al cambio exacto), **17 ski
 | **Claude Code** | **Bloqueo por hooks** + skills + subagente revisor | Sí: E1, E2, E3, E7 con Claude real |
 | **OpenCode** | **Bloqueo por plugin** (`v-ia.js`) + skills | Sí: E1–E5 con OpenCode 1.19.6 |
 | Gemini CLI, Codex, Cursor | Hooks + skills (experimental; Cursor sin archivo de instrucciones) | **No**: probado solo con cargas de entrada, no con el agente |
-| Kilo, Qwen, Windsurf, Copilot CLI | Instrucciones + skills | **No**: ruta tomada de la documentación de Gentle-AI, no ejecutados |
+| Antigravity, Copilot CLI, Hermes, Kilo, Kimi, Kiro, OpenClaw, Pi, Qwen, Trae, VS Code Copilot, Windsurf | Solo instrucciones (y skills donde el agente las admite) | **No**: rutas tomadas de Gentle-AI, no ejecutados |
 | Cualquier otro | `AGENTS.md` en el proyecto (`--agent generic`) | No |
 
 "Solo instrucciones" significa que el agente *debería* obedecer, pero nada se lo impide.
@@ -74,7 +74,7 @@ El primero descarga el binario precompilado de la última release a `~/.local/bi
 
 ### 4.1 Requisitos (solo para compilar desde el código fuente)
 
-- Linux (no probado en macOS ni Windows).
+- Linux. La CI pasa las pruebas también en macOS y Windows, pero el uso real solo se ha probado en Linux.
 - **Go 1.27 o superior** (`go version`). Si no lo tienes y no puedes usar el gestor de paquetes, descarga el tarball oficial desde <https://go.dev/dl/> y descomprímelo en `~/.local/go-sdk`:
   ```bash
   mkdir -p ~/.local/go-sdk && tar -C ~/.local/go-sdk -xzf go1.27.4.linux-amd64.tar.gz
@@ -120,7 +120,7 @@ Qué escribe para Claude Code:
 |---|---|
 | `~/.claude/CLAUDE.md` | Bloque ODD entre marcadores `<!-- v-ia:managed … -->`. Tu contenido no se toca. |
 | `~/.claude/settings.json` | 4 hooks (`PreToolUse`, `UserPromptSubmit`, `Stop`, `SessionStart`) + deny-list de archivos sensibles. |
-| `~/.claude/skills/<skill>/SKILL.md` | 17 skills: `odd-resume`, `odd-verify`, `odd-delegate`, `rdd-review`, `work-unit-commits`, `branch-pr`, `issue-creation`, `chained-pr`, `judgment-day`, `skill-creator`, `comment-writer`, `rdd-defect-workflow`, `go-testing`, `skill-improver`, `systemic-issue-triage`, `cognitive-doc-design`, `skill-registry`. Las mismas skills se instalan en la carpeta de skills de cada agente que las admite. |
+| `~/.claude/skills/<skill>/SKILL.md` | 18 skills: `issue-root-resolution`, `odd-resume`, `odd-verify`, `odd-delegate`, `rdd-review`, `work-unit-commits`, `branch-pr`, `issue-creation`, `chained-pr`, `judgment-day`, `skill-creator`, `comment-writer`, `rdd-defect-workflow`, `go-testing`, `skill-improver`, `systemic-issue-triage`, `cognitive-doc-design`, `skill-registry`. Las mismas skills se instalan en la carpeta de skills de cada agente que las admite. |
 | `~/.claude/agents/v-ia-reviewer.md` | Subagente revisor independiente (solo lectura). |
 
 > ⚠️ `settings.json` se reescribe con las claves en **orden alfabético** (el contenido se conserva, el formato cambia). Si tienes comentarios o un JSON no estricto, V-IA se niega a tocarlo.
@@ -271,9 +271,9 @@ Lee esto antes de fiarte:
 - **Las escrituras por Bash en modo lectura se detectan por heurística** (redirecciones, `sed -i`, `tee`, `mv`, `rm`…): un script que escriba por su cuenta puede pasar; en Claude Code lo detecta después el hook `Stop`.
 - **`task check` valida la forma de la evidencia**; `task verify` la contrasta con las comprobaciones del recibo, pero no demuestra que el resultado sea correcto.
 - Engram no está probado con el binario real; solo con uno simulado.
-- Codex, Gemini, Kilo, Qwen, Windsurf y Copilot CLI: rutas de instrucciones y de skills sin verificar con el agente real.
+- Fuera de Claude Code y OpenCode, las rutas de instrucciones y de skills están sin verificar con el agente real.
 - Aún no hay release publicada: hasta entonces se compila desde el código fuente (4.1–4.2). El instalador de una línea no se ha probado contra una release real.
-- **Frente a Gentle-AI** (el proyecto que inspiró este): V-IA es mucho más pequeño. Tiene 17 skills (ellos, una biblioteca más amplia), 2 agentes con bloqueo verificado con agentes reales (ellos, 17 integraciones), solo Linux probado (ellos, macOS/Linux/Windows con releases firmadas), un RDD local con recibo (ellos, transacciones atómicas y proveedores de revisión) y sin benchmarks, personas ni telemetría. Su diferencia es el bloqueo duro por hooks en Claude Code, `v-ia standards` y `v-ia deps`.
+- **Frente a Gentle-AI** (el proyecto que inspiró este): V-IA cubre una lista parecida de agentes y skills, pero con mucha menos verificación: solo 2 agentes con bloqueo comprobado, subagentes solo en Claude Code y OpenCode, y ninguna release publicada. Su diferencia es el bloqueo duro por hooks, `v-ia standards` y `v-ia deps`. Detalle en [`docs/STATUS.md`](docs/STATUS.md).
 - El logo como imagen real solo está pensado para Ghostty y kitty; no funciona dentro de tmux (ahí se usan bloques).
 
 ## 9. Desarrollo y pruebas

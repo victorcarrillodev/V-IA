@@ -26,3 +26,4 @@ test-runner: <comando>
 
 ## Log
 - L1: Que 'v-ia install --all' y un nuevo 'v-ia deps' instalen lo que falta (engram, codegraph, context7) en vez de fallar: Context7 por MCP remoto sin Node, Engram con go install/brew, CodeGraph con su instalador; nunca sudo; TUI muestra los pasos de instalación en la revisión.
+- Risk: ítem 5 (instaladores y dependencias externas); anotado el 2026-11-25, a partir de las tareas de la ficha

@@ -1,6 +1,6 @@
-# Estado de V-IA (2026-11-24)
+# Estado de V-IA (2026-11-25)
 
-Agentes principales: Claude Code, OpenCode, Codex y Antigravity. Referencia: Gentle AI (comparación parcial, no función por función de todo su código). Detalle y evidencia en `odd/tasks/v-ia-nuevo.md`; uso en `docs/manual.md`.
+Agentes principales: Claude Code, OpenCode, Codex y Antigravity. Referencia: Gentle AI v5.0.0 (comparación por documentación publicada y lectura parcial de código). Uso en `docs/manual.md`; evidencia en `odd/tasks/`.
 
 ## Por agente
 
@@ -12,33 +12,33 @@ Agentes principales: Claude Code, OpenCode, Codex y Antigravity. Referencia: Gen
 | Engram y CodeGraph configurados | sí | sí | sí (con `codex` en PATH) | sí |
 | Uso de Engram/CodeGraph dentro de una sesión | sin probar | sin probar | sin probar | sin probar |
 
-## Hecho en esta ronda
+En total hay 17 agentes más `generic`; fuera de Claude Code y OpenCode no están verificados con el agente real.
 
-- Los 4 agentes por defecto; `sync` y `uninstall` respetan lo instalado.
-- Detección de Antigravity CLI (`agy`).
-- `doctor` y las reglas solo prometen bloqueo donde se comprobó.
-- `.v-ia/` ya no mete su estado local en commits.
-- Fichas ODD: IDs repetidos, cierre incompleto y cita literal.
-- Recibo RDD: `--base`, veredictos no sobrescribibles, presupuesto de corrección, código bloqueado no reutilizable, petición congelada y refutador.
-- CodeGraph en el preset `standard`; Engram para los 4.
-- Respaldo antes de instaladores externos; corregido que V-IA pisaba lo que ellos escribían.
-- Sin protocolo de memoria duplicado cuando hay Engram.
+## Corregido el 2026-11-25
 
-Verificado con `go vet`, `go test -race ./...` y compilación para Windows y macOS.
+- CI: pruebas y finales de línea para macOS y Windows (en verde en `4a1f20e`).
+- `review check` no congelaba el candidato si `.v-ia/` o `.serena/` estaban ignoradas.
+- Las lentes y el escalado se conservan mientras la revisión sigue abierta.
+- Registros simultáneos de revisión: se perdían veredictos (3 de 4 en la reproducción). Ahora el recibo se bloquea.
+- Revisión RDD completa con cuatro agentes independientes: `approved`. La orquestó una sesión de Claude Code a mano.
+- Fichas antiguas con línea `Risk`.
+- **Sin verificar en CI (sin subir):** CI de Windows obligatoria, reemplazo del binario en ejecución en Windows y bloqueo del recibo en Windows. Sin revisión por lentes.
 
 ## Falta
 
-1. **Revisión con IA real: probada una vez y no completada.** Con OpenCode y el modelo gratuito `big-pickle`, el revisor no registró ningún veredicto y el refutador no refutó nada. El recibo siguió bloqueando la entrega (`checking`).
-2. **La selección de lentes no se conserva.** En esa prueba un `review check` repetido sin `--lenses` cambió de 1 a 4 lentes. En sentido contrario, un agente podría reducirlas.
-3. Verificar hooks de Codex (requiere `codex login`) y su ejecutable en PATH.
-4. Antigravity: bloqueo (capturar `PreToolUse` real; hooks en `~/.gemini/config/hooks.json`) y subagentes. La cuota de `agy` se restablece hacia el 2026-12-01. El IDE está sin revisar.
-5. Instalar V-IA en el equipo y usarlo 1 o 2 semanas.
-6. Medir el coste en tokens (solo hay tamaños en bytes).
-7. Cinco fichas antiguas de `odd/tasks/` fallan `task check` por no tener línea `Risk`.
-8. README sin revisar tras estos cambios.
+1. Publicar la primera release y probar `install.sh` y `v-ia update` contra ella.
+2. Instalar V-IA en el equipo y usarlo 1 o 2 semanas.
+3. Comprobar que un agente sigue el protocolo de revisión por sí solo con `v-ia` instalado (la prueba con OpenCode y `big-pickle` no se completó).
+4. Verificar hooks de Codex (requiere `codex login`) y su ejecutable en PATH.
+5. Antigravity: bloqueo (capturar `PreToolUse` real; hooks en `~/.gemini/config/hooks.json`) y subagentes. El IDE está sin revisar.
+6. Modelo por agente y subagentes en más clientes.
+7. Medir el coste en tokens (solo hay tamaños en bytes).
 
 ## Riesgos conocidos
 
 - El refutador se distingue por el nombre declarado, no por identidad.
+- Si `.v-ia/`, `.atl/` o `.serena/` no están ignoradas, su contenido se guarda como objetos git sueltos al congelar el candidato.
+- Un `review check` largo hace esperar a `ack`, `refute` y `reset`; pasados 2 minutos fallan y hay que reintentar.
 - El respaldo no cubre plugins ni binarios que descargan Engram o CodeGraph; restaurar `~/.claude.json` tarde revierte estado de Claude Code.
 - `install` ejecuta instaladores de terceros (omitible con `--codegraph=false`).
+- La CI avisa de que las acciones fijadas usan Node 20, ya obsoleto.

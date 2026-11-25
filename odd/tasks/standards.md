@@ -26,3 +26,4 @@ test-runner: <comando>
 
 ## Log
 - L1: Implementar v-ia standards (init|check|install|off|status): reglas path/deny locales sin tokens y reglas ai con una llamada por commit (claude -p, modelo barato, JSON), caché por hash de fragmento+regla, fail-open, pre-commit de Git con marcadores, aviso por defecto y --strict. Parte determinista también en review check.
+- Risk: ítem 5 (instala un hook pre-commit en el repo del usuario); anotado el 2026-11-25, a partir de las tareas de la ficha

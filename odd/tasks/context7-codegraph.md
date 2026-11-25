@@ -28,3 +28,4 @@ test-runner: <comando>
 
 ## Log
 - L1: Agregar Context7 y CodeGraph como componentes opcionales (flags --context7 --codegraph --all, casillas en la TUI, doctor, docs y README). El GGA propio (v-ia standards) queda para después.
+- Risk: ítem 5 (instala y registra herramientas de terceros); anotado el 2026-11-25, a partir de las tareas de la ficha

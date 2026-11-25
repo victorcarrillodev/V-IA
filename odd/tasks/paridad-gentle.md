@@ -26,3 +26,4 @@ test-runner: <comando>
 
 ## Log
 - L1: Cerrar las brechas factibles frente a Gentle-AI: biblioteca de skills ampliada, v-ia update (auto-actualización verificada con sha256), CI en GitHub Actions. Fuera de alcance por no verificable aquí: agentes no instalados, Windows, benchmarks, telemetría, personas.
+- Risk: ítem 5 (auto-actualización y CI); anotado el 2026-11-25, a partir de las tareas de la ficha
