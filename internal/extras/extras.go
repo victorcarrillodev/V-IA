@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -28,9 +29,9 @@ type Info struct {
 }
 
 var infos = map[string]Info{
-	Engram:   {Engram, "Engram — memoria entre sesiones", "instala engram (go install o brew) si falta y ejecuta 'engram setup claude-code'", ""},
+	Engram:   {Engram, "Engram — memoria entre sesiones", "instala engram (go install o brew) si falta y ejecuta 'engram setup' en cada agente presente", ""},
 	Context7: {Context7, "Context7 — documentación actual por MCP", "registra el MCP remoto de Context7 (no necesita Node; requiere claude)", ""},
-	CodeGraph: {CodeGraph, "CodeGraph — grafo de código por MCP", "instala CodeGraph si falta (npm o su instalador) y lo registra en Claude Code",
+	CodeGraph: {CodeGraph, "CodeGraph — grafo de código por MCP", "instala CodeGraph si falta (npm o su instalador) y lo registra en los agentes presentes",
 		"su instalador también escribe instrucciones en ~/.claude/CLAUDE.md; luego ejecuta 'codegraph init -i' en cada proyecto"},
 }
 
@@ -67,6 +68,91 @@ var (
 		return c.Run()
 	}
 )
+
+// agent describe cómo se llama cada agente principal en las herramientas externas.
+type agent struct{ name, bin, engram, codegraph string }
+
+var primary = []agent{
+	{"claude-code", "claude", "claude-code", "claude"},
+	{"opencode", "opencode", "opencode", "opencode"},
+	{"codex", "codex", "codex", "codex"},
+	{"antigravity", "agy", "antigravity-cli", "antigravity"},
+}
+
+func codexDir(home string) string {
+	if c := os.Getenv("CODEX_HOME"); c != "" {
+		return c
+	}
+	return filepath.Join(home, ".codex")
+}
+
+func (a agent) present(home string) bool {
+	if have(a.bin) {
+		return true
+	}
+	var dir string
+	switch a.name {
+	case "opencode":
+		dir = opencodeDir(home)
+	case "codex":
+		dir = codexDir(home)
+	case "antigravity":
+		dir = filepath.Join(home, ".gemini", "antigravity-cli")
+	default:
+		return false
+	}
+	st, err := os.Stat(dir)
+	return err == nil && st.IsDir()
+}
+
+// has indica si el agente ya conoce el servidor MCP.
+func (a agent) has(home, name string) bool {
+	switch a.name {
+	case "opencode":
+		return openCodeHas(home, name)
+	case "codex":
+		b, err := os.ReadFile(filepath.Join(codexDir(home), "config.toml"))
+		return err == nil && strings.Contains(string(b), "[mcp_servers."+name+"]")
+	case "antigravity":
+		b, err := os.ReadFile(filepath.Join(home, ".gemini", "config", "mcp_config.json"))
+		return err == nil && strings.Contains(string(b), `"`+name+`"`)
+	}
+	return registered(home, name)
+}
+
+// HasServer indica si un agente principal ya tiene configurado un servidor MCP.
+func HasServer(home, agentName, server string) bool {
+	for _, a := range primary {
+		if a.name == agentName {
+			return a.has(home, server)
+		}
+	}
+	return false
+}
+
+// targets son los agentes presentes, limitados a only si no es nil. Sin ninguno presente
+// ni elección, Claude Code.
+func targets(home string, only []string) []agent {
+	var out []agent
+	for _, a := range primary {
+		if (only == nil || slices.Contains(only, a.name)) && a.present(home) {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 && (only == nil || slices.Contains(only, "claude-code")) {
+		out = primary[:1]
+	}
+	return out
+}
+
+func allHave(home, name string, as []agent) bool {
+	for _, a := range as {
+		if !a.has(home, name) {
+			return false
+		}
+	}
+	return true
+}
 
 // ocPresent indica si OpenCode está instalado: entonces los MCP también se registran allí.
 func ocPresent() bool { return have("opencode") }
@@ -107,14 +193,16 @@ func registered(home, name string) bool {
 }
 
 // Installed indica si el extra ya está listo (binario presente y servidor MCP registrado).
-func Installed(home, id string) bool {
+func Installed(home, id string) bool { return installed(home, id, targets(home, nil)) }
+
+func installed(home, id string, as []agent) bool {
 	switch id {
 	case Engram:
-		return have("engram") && registered(home, "engram") && (!ocPresent() || openCodeHas(home, "engram"))
+		return have("engram") && allHave(home, "engram", as)
 	case Context7:
 		return (!have("claude") || registered(home, "context7")) && (!ocPresent() || openCodeHas(home, "context7")) && (have("claude") || ocPresent())
 	case CodeGraph:
-		return have("codegraph") && registered(home, "codegraph")
+		return have("codegraph") && allHave(home, "codegraph", as)
 	}
 	return false
 }
@@ -131,6 +219,12 @@ func IsMissing(err error) bool { var m *MissingError; return errors.As(err, &m) 
 // Plan devuelve los pasos pendientes y avisos. Si falta un requisito devuelve además un
 // *MissingError (los pasos siguen informados, pero no deben ejecutarse).
 func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
+	return PlanFor(home, ids, nil)
+}
+
+// PlanFor limita Engram y CodeGraph a los agentes dados (nil = todos los presentes).
+func PlanFor(home string, ids, only []string) (steps []Step, notes []string, err error) {
+	as := targets(home, only)
 	var missing []string
 	need := func(id string, bins ...string) {
 		for _, b := range bins {
@@ -143,7 +237,7 @@ func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
 		if _, ok := infos[id]; !ok {
 			return nil, nil, fmt.Errorf("componente desconocido: %s (disponibles: %s)", id, strings.Join(All, ", "))
 		}
-		if Installed(home, id) {
+		if installed(home, id, as) {
 			notes = append(notes, id+": ya instalado (sin cambios)")
 			continue
 		}
@@ -159,11 +253,14 @@ func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
 					missing = append(missing, "engram no está y no hay 'go' ni 'brew' para instalarlo (binarios: https://github.com/Gentleman-Programming/engram/releases)")
 				}
 			}
-			if !registered(home, "engram") {
-				steps = append(steps, Step{Desc: "configurar Engram para Claude Code", Name: "engram", Args: []string{"setup", "claude-code"}})
-			}
-			if ocPresent() && !openCodeHas(home, "engram") {
-				steps = append(steps, Step{Desc: "configurar Engram para OpenCode", Name: "engram", Args: []string{"setup", "opencode"}})
+			for _, a := range as {
+				if a.name == "codex" && !have(a.bin) {
+					notes = append(notes, "engram: codex no está en PATH; añádelo y ejecuta 'engram setup codex'")
+					continue
+				}
+				if !a.has(home, "engram") {
+					steps = append(steps, Step{Desc: "configurar Engram para " + a.name, Name: "engram", Args: []string{"setup", a.engram}})
+				}
 			}
 		case Context7:
 			if !have("claude") && !ocPresent() {
@@ -177,7 +274,13 @@ func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
 				steps = append(steps, Step{Desc: "registrar Context7 en OpenCode (~/.config/opencode/opencode.json)", Fn: func() error { return addOpenCodeMCP(home, "context7", Context7URL) }})
 			}
 		case CodeGraph:
-			need(id, "claude")
+			if len(as) == 0 {
+				notes = append(notes, "codegraph: ninguno de los agentes elegidos lo admite")
+				continue
+			}
+			if len(as) == 1 && as[0].name == "claude-code" {
+				need(id, "claude")
+			}
 			if !have("codegraph") {
 				switch {
 				case have("npm"):
@@ -189,7 +292,11 @@ func Plan(home string, ids []string) (steps []Step, notes []string, err error) {
 					missing = append(missing, "codegraph no está y no hay 'npm' ni 'curl' para instalarlo")
 				}
 			}
-			steps = append(steps, Step{"registrar CodeGraph en Claude Code", "codegraph", []string{"install", "--yes", "--target=claude"}, nil, nil})
+			var ids, names []string
+			for _, a := range as {
+				ids, names = append(ids, a.codegraph), append(names, a.name)
+			}
+			steps = append(steps, Step{"registrar CodeGraph en " + strings.Join(names, ", "), "codegraph", []string{"install", "--yes", "--target=" + strings.Join(ids, ",")}, nil, nil})
 			notes = append(notes, "codegraph: "+infos[id].Warn)
 		}
 	}

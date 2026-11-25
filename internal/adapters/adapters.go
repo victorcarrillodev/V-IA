@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	corefs "v-ia/core"
@@ -16,10 +17,12 @@ const Version = "0.3.0"
 
 // Adapter describe un agente soportado.
 type Adapter struct {
-	Name    string
-	Binary  string                     // ejecutable a buscar en PATH
-	Hooks   bool                       // ¿V-IA puede hacer cumplir ODD por bloqueo (hooks)?
-	Targets func(home string) []string // archivos de instrucciones globales
+	Name   string
+	Binary string // ejecutable a buscar en PATH
+	Hooks  bool   // ¿V-IA puede hacer cumplir ODD por bloqueo (hooks)?
+	// HooksVerified indica que el bloqueo se probó con el agente real.
+	HooksVerified bool
+	Targets       func(home string) []string // archivos de instrucciones globales
 	// SkillsDir es la carpeta global de skills del agente ("" = el agente no las admite aquí).
 	SkillsDir func(home string) string
 	// Verified indica que la ruta de skills se probó con el agente real.
@@ -64,10 +67,10 @@ func one(parts ...string) []string { return []string{filepath.Join(parts...)} }
 // configuración oficial de cada agente). Solo Claude Code expone hooks de bloqueo;
 // el resto recibe las instrucciones y `doctor` lo declara como "solo recomendación".
 var All = []Adapter{
-	{Name: "claude-code", Binary: "claude", Hooks: true, Targets: func(h string) []string { return one(h, ".claude", "CLAUDE.md") },
+	{Name: "claude-code", Binary: "claude", Hooks: true, HooksVerified: true, Targets: func(h string) []string { return one(h, ".claude", "CLAUDE.md") },
 		SkillsDir: func(h string) string { return filepath.Join(h, ".claude", "skills") }, SkillsVerified: true,
 		AgentsDir: func(h string) string { return filepath.Join(h, ".claude", "agents") }, AgentStyle: "claude"},
-	{Name: "opencode", Binary: "opencode", Hooks: true, Targets: func(h string) []string { return one(xdgConfig(h), "opencode", "AGENTS.md") },
+	{Name: "opencode", Binary: "opencode", Hooks: true, HooksVerified: true, Targets: func(h string) []string { return one(xdgConfig(h), "opencode", "AGENTS.md") },
 		SkillsDir: func(h string) string { return filepath.Join(xdgConfig(h), "opencode", "skills") },
 		AgentsDir: func(h string) string { return filepath.Join(xdgConfig(h), "opencode", "agents") }, AgentStyle: "opencode"},
 	{Name: "codex", Binary: "codex", Hooks: true, Targets: func(h string) []string { return one(codexHome(h), "AGENTS.md") },
@@ -117,12 +120,12 @@ var All = []Adapter{
 			}
 			return filepath.Join(h, ".kimi-code", "skills")
 		}},
-	{Name: "antigravity", Targets: func(string) []string { return nil },
+	{Name: "antigravity", Binary: "agy", Targets: func(string) []string { return nil },
 		OwnFile: func(h string) (string, string) {
 			return filepath.Join(h, ".gemini", "config", "rules", "v-ia-odd.md"), "---\ntrigger: always_on\n---\n"
 		},
 		DetectDirs: func(h string) []string {
-			return []string{filepath.Join(h, ".gemini", "antigravity"), filepath.Join(h, ".gemini", "config")}
+			return []string{filepath.Join(h, ".gemini", "antigravity-cli"), filepath.Join(h, ".gemini", "antigravity"), filepath.Join(h, ".gemini", "config")}
 		},
 		SkillsDir: func(h string) string { return filepath.Join(h, ".gemini", "config", "skills") }},
 	{Name: "pi", Binary: "pi", Targets: func(h string) []string { return one(piAgentDir(h), "APPEND_SYSTEM.md") },
@@ -133,6 +136,12 @@ var All = []Adapter{
 	{Name: "copilot-cli", Binary: "copilot", Targets: func(h string) []string { return one(copilotHome(h), "copilot-instructions.md") },
 		SkillsDir: func(h string) string { return filepath.Join(copilotHome(h), "skills") }},
 }
+
+// Primary son los agentes que se instalan por defecto y que doctor informa siempre.
+var Primary = []string{"claude-code", "opencode", "codex", "antigravity"}
+
+// IsPrimary indica si el agente está en Primary.
+func IsPrimary(name string) bool { return slices.Contains(Primary, name) }
 
 // Generic escribe AGENTS.md en el proyecto actual; sirve a cualquier agente que lo lea.
 // No figura en All (la TUI y doctor son globales); se elige con --agent generic.
@@ -245,7 +254,7 @@ func ODDBlock(enforced bool) (core.Block, error) {
 		tail = "odd/enforced.md"
 	}
 	var content string
-	for _, f := range []string{"odd/odd.md", tail, "odd/classify.md", "memory/memory-protocol.md"} {
+	for _, f := range []string{"odd/odd.md", "odd/delegate.md", tail, "odd/classify.md", "memory/memory-protocol.md"} {
 		b, err := corefs.FS.ReadFile(f)
 		if err != nil {
 			return core.Block{}, err
@@ -277,14 +286,15 @@ func PersonaBlock(name string) (core.Block, bool) {
 	return core.Block{ID: "persona", Version: Version, Content: string(b)}, true
 }
 
-func Targets(home string, names []string) ([]core.Target, error) {
+func Targets(home string, names []string, engramPlanned ...bool) ([]core.Target, error) {
+	planned := len(engramPlanned) > 0 && engramPlanned[0]
 	var ts []core.Target
 	for _, n := range names {
 		a, ok := Find(n)
 		if !ok {
 			continue
 		}
-		b, err := ODDBlock(a.Hooks)
+		b, err := a.Block(home, planned)
 		if err != nil {
 			return nil, err
 		}

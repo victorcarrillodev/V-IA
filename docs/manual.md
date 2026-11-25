@@ -83,10 +83,10 @@ v-ia install [--dry-run] [--yes] [--force] [--agent a,b] [--no-hooks] [--no-perm
 | `--scope global\|workspace` | `workspace` escribe instrucciones, skills, subagentes y hooks en el proyecto actual (`.claude/`, `.gemini/`…) en vez de en tu carpeta personal; solo para claude-code, gemini-cli, qwen-code, kimi y generic. Los backups y el registro de instalación siguen siendo globales. |
 | `--yes` | Aplica. Sin `--yes` ni `--dry-run`, se niega a escribir. |
 | `--force` | Sobrescribe lo editado a mano (con backup). |
-| `--agent` | Lista separada por comas. Por defecto `claude-code`; `auto` = claude-code más los agentes detectados en PATH. Válidos: `claude-code, opencode, codex, gemini-cli, cursor, kilocode, qwen-code, windsurf, copilot-cli, generic`. |
+| `--agent` | Lista separada por comas. Por defecto `claude-code,opencode,codex,antigravity` (`sync` y `uninstall` usan los agentes ya instalados); `auto` = claude-code más los agentes detectados en PATH. Válidos: `claude-code, opencode, codex, antigravity, gemini-cli, cursor, kilocode, qwen-code, windsurf, copilot-cli, generic`. |
 | `--no-hooks` | No instala hooks. Con `--no-permissions` tampoco toca `settings.json`. |
 | `--no-permissions` | No siembra la deny-list. |
-| `--engram` | Además, ejecuta `engram setup claude-code` (requiere `engram`). |
+| `--engram` | Además, ejecuta `engram setup` en cada agente elegido y presente. |
 | `--context7` | Además, registra Context7 en Claude Code (ver [Componentes opcionales](#componentes-opcionales-engram-context7-codegraph)). |
 | `--codegraph` | Además, instala y registra CodeGraph. |
 | `--all` | Los tres opcionales a la vez: `engram`, `context7` y `codegraph`. |
@@ -685,3 +685,27 @@ Antes de subir cambios: `go build ./... && go vet ./... && go test ./...` y, si 
 ### Guía de estilo de skills
 
 Cada `core/skills/<nombre>/SKILL.md` debe llevar frontmatter completo (`name` igual al directorio, `description` en una línea de ≤250 caracteres con el disparador primero, `license`, `metadata.author`, `metadata.version`) y un cuerpo de ≤700 palabras; lo largo va en `assets/` o `references/`. `core/skills_style_test.go` lo hace cumplir (equivalente a la guía de estilo de gentle-ai).
+
+## CodeGraph en el stack
+
+`install` con preset `standard` instala (si falta) y registra CodeGraph en los agentes elegidos y presentes. `--codegraph=false` lo omite y `--preset minimal` no lo incluye. Su instalador edita la configuración de cada agente: V-IA no respalda ni desinstala esos cambios. Luego ejecuta `codegraph init` en cada proyecto.
+
+## Reglas del recibo
+
+Cada lente admite un solo veredicto por candidato. Tras un bloqueante hay que cambiar el código, y una corrección que falla las pruebas no devuelve el presupuesto. El recibo recuerda su `--base`.
+
+## Delegación
+
+Las reglas siempre cargadas incluyen cuándo delegar (exploración, escritores paralelos, respaldo de contexto, verificador independiente). Los subagentes solo se nombran en los agentes donde V-IA los instala (Claude Code y OpenCode entre los cuatro principales), y el bloqueo solo se promete donde se comprobó con el agente real.
+
+## Petición y refutación en el recibo
+
+`v-ia review check --request "texto"` (o `--request-file RUTA`, máximo 8000 bytes) congela la petición para que el revisor la contraste. `v-ia review refute --input FILE` descarta falsos positivos: una vez por candidato, por alguien distinto de quien los reportó (se comprueba el nombre declarado, no la identidad), respondiendo a todos los bloqueantes y con evidencia para cada refutado.
+
+## Protocolo de memoria
+
+Si Engram está configurado (o se instala con `--engram`), V-IA no repite su protocolo y deja solo lo propio de ODD.
+
+## Respaldo antes de instaladores externos
+
+Antes de ejecutar Engram, CodeGraph o Context7, `install` copia las configuraciones de los agentes a `~/.v-ia/backups` (incluida `~/.claude.json`, que Claude Code cambia a diario: restaurarla tarde revierte ese estado). `v-ia restore latest --yes` vuelve al estado anterior a la instalación. No cubre los plugins ni binarios que esas herramientas descargan.

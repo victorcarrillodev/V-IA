@@ -15,6 +15,9 @@ var (
 	idRe      = regexp.MustCompile(`\b(T-\d+)\b`)
 	specRe    = regexp.MustCompile(`\bS\d+\b`)
 	logRe     = regexp.MustCompile(`^\s*[-*]\s*L1\s*:\s*(.*)$`)
+	done      = regexp.MustCompile(`(?m)^status:\s*done\s*$`)
+	riskRe    = regexp.MustCompile(`Risk:\s*(none|ítem\s*[1-6])`)
+	commentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
 	anyTaskRe = regexp.MustCompile(`^\s*- \[[ xX]\]\s*(.*)$`)
 	checkedRe = regexp.MustCompile(`^\s*- \[[xX]\]\s*(.*)$`)
 )
@@ -49,7 +52,8 @@ func New(root, feature, tmpl string, now time.Time, request ...string) (string, 
 	d := now.Format("2006-01-02")
 	r := strings.NewReplacer("<nombre>", feature, "<fecha>", d)
 	if len(request) > 0 && strings.TrimSpace(request[0]) != "" {
-		line := strings.Join(strings.Fields(request[0]), " ")
+		// literal: las líneas siguientes van citadas para que no se lean como secciones o tareas
+		line := strings.ReplaceAll(strings.TrimSpace(strings.ReplaceAll(request[0], "\r\n", "\n")), "\n", "\n  > ")
 		tmpl = strings.NewReplacer(
 			"<pega aquí la petición literal del usuario: textos, mensajes de error y ejemplos exactos>", line,
 			"<pega aquí la petición original, literal>", line).Replace(tmpl)
@@ -142,7 +146,18 @@ func Check(content string) []Problem {
 	if f < 0 {
 		return append(ps, Problem{1, "falta la sección '## Tareas'"})
 	}
+	seen := map[string]bool{}
+	open := false
 	for i := f; i < t; i++ {
+		if a := anyTaskRe.FindStringSubmatch(lines[i]); a != nil {
+			if id := idRe.FindString(a[1]); id != "" {
+				if seen[id] {
+					ps = append(ps, Problem{i + 1, id + " está repetido: cada tarea necesita un ID propio"})
+				}
+				seen[id] = true
+			}
+			open = open || !checkedRe.MatchString(lines[i])
+		}
 		if a := anyTaskRe.FindStringSubmatch(lines[i]); a != nil && len(specs) > 0 {
 			refs := specRe.FindAllString(a[1], -1)
 			if len(refs) == 0 {
@@ -164,6 +179,14 @@ func Check(content string) []Problem {
 			ps = append(ps, Problem{i + 1, "tarea marcada [x] sin identificador T-n"})
 		case !ev[id]:
 			ps = append(ps, Problem{i + 1, fmt.Sprintf("%s está [x] sin fila en Evidencia (| %s | comando | resultado observado | fecha |)", id, id)})
+		}
+	}
+	if done.MatchString(content) {
+		if open {
+			ps = append(ps, Problem{f, "status done con tareas sin cerrar"})
+		}
+		if !riskRe.MatchString(commentRe.ReplaceAllString(content, "")) {
+			ps = append(ps, Problem{f, "status done: falta una línea 'Risk: none' o 'Risk: ítem N (motivo)'"})
 		}
 	}
 	return ps

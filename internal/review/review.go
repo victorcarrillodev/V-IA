@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -82,6 +83,7 @@ type LensReview struct {
 
 type Receipt struct {
 	CandidateID   string     `json:"candidate_id"`
+	Base          string     `json:"base,omitempty"` // referencia pedida con --base; "" = HEAD
 	BaseTree      string     `json:"base_tree,omitempty"`
 	CandidateTree string     `json:"candidate_tree,omitempty"`
 	Paths         []string   `json:"paths,omitempty"`
@@ -94,7 +96,12 @@ type Receipt struct {
 	LensReason     string       `json:"lens_selection_reason,omitempty"`
 	Reviews        []LensReview `json:"reviews,omitempty"`
 	Attempt        int          `json:"attempt"` // 1 = revisión inicial; 2 = tras la única corrección
-	State          string       `json:"state"`
+	Refutation     *Refutation  `json:"refutation,omitempty"`
+	// BlockedTrees son los árboles que un revisor bloqueó en esta revisión.
+	BlockedTrees []string `json:"blocked_trees,omitempty"`
+	// Request es la petición literal: el revisor contrasta contra ella.
+	Request string `json:"request,omitempty"`
+	State   string `json:"state"`
 }
 
 // RunOptions son las elecciones del agente que se congelan en el recibo.
@@ -104,6 +111,7 @@ type RunOptions struct {
 	LensReason string
 	EscItem    int
 	EscReason  string
+	Request    string
 	Timeout    time.Duration
 }
 
@@ -153,10 +161,35 @@ func Run(root string, cmds []string, o RunOptions) (Receipt, error) {
 	if prevErr == nil && prev.State == StateEscalated {
 		return Receipt{}, errors.New("la revisión anterior quedó ESCALADA (la única corrección no bastó): decide cómo seguir y ejecuta 'v-ia review reset'")
 	}
+	if len(o.Request) > maxRequest {
+		return Receipt{}, fmt.Errorf("la petición supera %d bytes: resúmela en la ficha y cita lo esencial", maxRequest)
+	}
+	// dentro de una misma revisión (correcciones incluidas) la petición queda congelada
+	if prevErr == nil && prev.State != StateReady && prev.State != StateApproved && prev.Request != "" {
+		if o.Request != "" && o.Request != prev.Request {
+			return Receipt{}, errors.New("la petición está congelada en esta revisión: para cambiarla ejecuta 'v-ia review reset'")
+		}
+		o.Request = prev.Request
+	}
 	cand, cerr := TakeCandidate(root, o.Base)
-	r := Receipt{Result: "pass", Attempt: 1}
-	if prevErr == nil && prev.State == StateCorrectionRequired {
-		r.Attempt = prev.Attempt + 1 // esta es la corrección acotada
+	r := Receipt{Result: "pass", Attempt: 1, Base: o.Base, Request: o.Request}
+	if prevErr == nil {
+		switch {
+		case prev.State == StateCorrectionRequired:
+			r.Attempt = prev.Attempt + 1 // esta es la corrección acotada
+		case prev.State != StateReady && prev.State != StateApproved:
+			r.Attempt = prev.Attempt // una corrección que falla no devuelve el presupuesto
+		}
+	}
+	if prevErr == nil && prev.State != StateReady && prev.State != StateApproved {
+		blockedTrees := prev.BlockedTrees
+		if prev.State == StateCorrectionRequired {
+			blockedTrees = append(blockedTrees, prev.CandidateTree)
+		}
+		if cerr == nil && slices.Contains(blockedTrees, cand.CandidateTree) {
+			return Receipt{}, errors.New("no hay corrección: ese código ya fue bloqueado en esta revisión")
+		}
+		r.BlockedTrees = blockedTrees
 	}
 	for _, c := range cmds {
 		ctx, cancel := context.WithTimeout(context.Background(), o.Timeout)
@@ -326,7 +359,7 @@ func RecordReview(root string, in ReviewInput) (Receipt, error) {
 	if r.State == StateEscalated || r.State == StateApproved {
 		return r, fmt.Errorf("el recibo ya está %s: no admite más revisiones", r.State)
 	}
-	cur, err := currentID(root, "")
+	cur, err := currentID(root, r.Base)
 	if err != nil {
 		return r, err
 	}
@@ -336,6 +369,11 @@ func RecordReview(root string, in ReviewInput) (Receipt, error) {
 	if err := validate(in, r); err != nil {
 		return r, err
 	}
+	for _, x := range r.Reviews {
+		if x.Lens == in.Lens {
+			return r, fmt.Errorf("la lente %q ya tiene veredicto para este candidato: corrige el código y ejecuta 'v-ia review check'", in.Lens)
+		}
+	}
 	lr := LensReview{Lens: in.Lens, Reviewer: in.Reviewer, Inspected: len(in.Inspection.Paths), Findings: in.Findings,
 		Evidence: in.Evidence, Verdict: "approve", At: time.Now().UTC().Format(time.RFC3339)}
 	for _, f := range in.Findings {
@@ -343,13 +381,7 @@ func RecordReview(root string, in ReviewInput) (Receipt, error) {
 			lr.Verdict = "changes"
 		}
 	}
-	var keep []LensReview
-	for _, x := range r.Reviews {
-		if x.Lens != in.Lens {
-			keep = append(keep, x)
-		}
-	}
-	r.Reviews = append(keep, lr)
+	r.Reviews = append(r.Reviews, lr)
 	sort.Slice(r.Reviews, func(i, j int) bool { return r.Reviews[i].Lens < r.Reviews[j].Lens })
 	r.State = reviewState(r)
 	return r, save(root, r)
@@ -404,7 +436,7 @@ func Verify(root string, requireAck bool) error {
 	if r.Result != "pass" {
 		return errors.New("el último recibo es fail")
 	}
-	cur, err := currentID(root, "")
+	cur, err := currentID(root, r.Base)
 	if err != nil {
 		return err
 	}
@@ -429,15 +461,17 @@ func Verify(root string, requireAck bool) error {
 
 // StatusInfo resume el estado para el orquestador (sin inferir nada de prosa).
 type StatusInfo struct {
-	State          string   `json:"state"`  // working | checking | ready | needs_decision
-	Detail         string   `json:"detail"` // estado interno del recibo
-	NextTransition string   `json:"next_transition"`
-	Pending        []string `json:"pending_lenses,omitempty"`
-	Attempt        int      `json:"attempt,omitempty"`
-	Tier           string   `json:"tier,omitempty"`
-	Due            bool     `json:"review_due"`
-	Paths          []string `json:"paths,omitempty"`
-	CandidateID    string   `json:"candidate_id,omitempty"`
+	State          string     `json:"state"`  // working | checking | ready | needs_decision
+	Detail         string     `json:"detail"` // estado interno del recibo
+	NextTransition string     `json:"next_transition"`
+	Pending        []string   `json:"pending_lenses,omitempty"`
+	Attempt        int        `json:"attempt,omitempty"`
+	Tier           string     `json:"tier,omitempty"`
+	Due            bool       `json:"review_due"`
+	Paths          []string   `json:"paths,omitempty"`
+	CandidateID    string     `json:"candidate_id,omitempty"`
+	Request        string     `json:"request,omitempty"`
+	Blocking       []Blocking `json:"blocking,omitempty"`
 }
 
 // Status clasifica el recibo actual contra el árbol vivo.
@@ -446,8 +480,8 @@ func Status(root string) StatusInfo {
 	if err != nil {
 		return StatusInfo{State: PublicWorking, Detail: "sin_recibo", NextTransition: "run: v-ia review check"}
 	}
-	s := StatusInfo{Detail: r.State, Attempt: r.Attempt, Tier: r.Risk.Tier, Due: r.Risk.ReviewDue, Paths: r.Paths, CandidateID: r.CandidateID}
-	if cur, err := currentID(root, ""); err != nil || cur != r.CandidateID {
+	s := StatusInfo{Detail: r.State, Attempt: r.Attempt, Tier: r.Risk.Tier, Due: r.Risk.ReviewDue, Paths: r.Paths, CandidateID: r.CandidateID, Request: r.Request, Blocking: r.Blocking()}
+	if cur, err := currentID(root, r.Base); err != nil || cur != r.CandidateID {
 		s.State, s.Detail, s.NextTransition = PublicWorking, "candidato_cambiado", "run: v-ia review check"
 		return s
 	}
@@ -458,7 +492,7 @@ func Status(root string) StatusInfo {
 		s.State, s.Pending = PublicChecking, r.Pending()
 		s.NextTransition = "collect: revisión independiente de las lentes " + strings.Join(s.Pending, ", ") + " (v-ia review ack)"
 	case StateCorrectionRequired:
-		s.State, s.NextTransition = PublicWorking, "fix: una única corrección acotada y luego v-ia review check"
+		s.State, s.NextTransition = PublicWorking, "fix: una única corrección acotada y luego v-ia review check (un falso positivo se refuta con v-ia review refute)"
 	case StateEscalated:
 		s.State, s.NextTransition = PublicNeedsDecision, "stop: decide el usuario (v-ia review reset)"
 	default: // ready | approved

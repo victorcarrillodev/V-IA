@@ -33,8 +33,8 @@ type Result struct {
 func Run(home string) []Result {
 	var rs []Result
 	for _, a := range adapters.All {
-		// Solo se informa de los agentes presentes (claude-code, el principal, siempre).
-		if !a.Detected() && a.Name != "claude-code" {
+		// Los principales se informan siempre; el resto, solo si están presentes.
+		if !a.Detected() && !adapters.IsPrimary(a.Name) {
 			continue
 		}
 		if a.Detected() {
@@ -42,9 +42,12 @@ func Run(home string) []Result {
 		} else {
 			rs = append(rs, Result{Warn, a.Name + ": no encontrado en PATH"})
 		}
-		if a.Hooks {
+		switch {
+		case a.HooksVerified:
 			rs = append(rs, Result{Pass, a.Name + ": ODD se hace cumplir por bloqueo (hooks)"})
-		} else {
+		case a.Hooks:
+			rs = append(rs, Result{Warn, a.Name + ": hooks sin verificar con el agente real; trata ODD como recomendación"})
+		default:
 			rs = append(rs, Result{Warn, a.Name + ": solo instrucciones; sin hooks ODD es una recomendación"})
 		}
 		if a.Name == "opencode" && a.Detected() {

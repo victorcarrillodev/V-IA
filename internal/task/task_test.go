@@ -79,7 +79,7 @@ func TestPlantillaSinCompletarFallaYConPeticionPasa(t *testing.T) {
 	if ps := Check(string(b2)); len(ps) != 0 {
 		t.Fatalf("con petición literal debe validar: %v\n%s", ps, b2)
 	}
-	if !strings.Contains(string(b2), `S1: Crea el comando foo y que imprima "hola"`) {
+	if !strings.Contains(string(b2), "S1: Crea el comando  foo\n  > y que imprima \"hola\"") {
 		t.Fatalf("S1 no es literal:\n%s", b2)
 	}
 }

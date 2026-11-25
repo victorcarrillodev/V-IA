@@ -25,6 +25,7 @@ type Options struct {
 	Permissions bool
 	NoSkills    bool // no instalar la biblioteca de skills (preset minimal)
 	Persona     string
+	Engram      bool // Engram se va a configurar en esta instalación
 }
 
 var skillNames = []string{"odd-resume", "odd-verify", "odd-delegate", "rdd-review", "work-unit-commits", "branch-pr", "issue-creation", "chained-pr", "judgment-day", "skill-creator", "comment-writer", "rdd-defect-workflow", "go-testing", "skill-improver", "systemic-issue-triage", "cognitive-doc-design", "skill-registry", "issue-root-resolution"}
@@ -79,7 +80,7 @@ func files(o Options) ([]managedFile, error) {
 		}
 		if a.OwnFile != nil {
 			path, fm := a.OwnFile(o.Home)
-			b, err := adapters.ODDBlock(a.Hooks)
+			b, err := a.Block(o.Home, o.Engram)
 			if err != nil {
 				return nil, err
 			}
@@ -192,7 +193,7 @@ func Install(o Options) (core.Plan, error) {
 	if o.Exe == "" {
 		o.Exe = ExeForHooks()
 	}
-	ts, err := adapters.Targets(o.Home, o.Agents)
+	ts, err := adapters.Targets(o.Home, o.Agents, o.Engram)
 	if err != nil {
 		return core.Plan{}, err
 	}
@@ -262,7 +263,7 @@ func Sync(o Options) (core.Plan, error) {
 // conserva. La deny-list de permisos es decisión del usuario y se deja.
 func Uninstall(o Options) (core.Plan, error) {
 	var p core.Plan
-	ts, err := adapters.Targets(o.Home, o.Agents)
+	ts, err := adapters.Targets(o.Home, o.Agents, o.Engram)
 	if err != nil {
 		return p, err
 	}

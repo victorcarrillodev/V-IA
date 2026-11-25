@@ -123,12 +123,12 @@ func cmdPlan(kind string, args []string) int {
 	dry := fs.Bool("dry-run", false, "mostrar diff sin escribir")
 	yes := fs.Bool("yes", false, "aplicar sin confirmación")
 	force := fs.Bool("force", false, "sobrescribir lo editado a mano (con backup)")
-	agent := fs.String("agent", "claude-code", "agentes separados por coma ("+agentNames()+", generic) o auto (los detectados en PATH, más claude-code)")
+	agent := fs.String("agent", strings.Join(adapters.Primary, ","), "agentes separados por coma ("+agentNames()+", generic) o auto (los detectados en PATH, más claude-code)")
 	noHooks := fs.Bool("no-hooks", false, "no instalar los hooks que hacen cumplir ODD")
 	noPerms := fs.Bool("no-permissions", false, "no sembrar la deny-list de archivos sensibles")
-	engram := fs.Bool("engram", false, "además, configurar Engram (memoria) con 'engram setup claude-code'")
+	engram := fs.Bool("engram", false, "además, configurar Engram (memoria) con 'engram setup' en los agentes elegidos")
 	ctx7 := fs.Bool("context7", false, "además, registrar Context7 (documentación por MCP)")
-	cgraph := fs.Bool("codegraph", false, "además, instalar y registrar CodeGraph (grafo de código por MCP)")
+	cgraph := fs.Bool("codegraph", false, "instalar y registrar CodeGraph (grafo de código por MCP); incluido en el preset standard, --codegraph=false lo omite")
 	all := fs.Bool("all", false, "además, todos los opcionales: engram, context7 y codegraph")
 	persona := fs.String("persona", "neutral", "tono del agente: "+strings.Join(adapters.Personas, " | "))
 	preset := fs.String("preset", "standard", "minimal (solo instrucciones) | standard (hooks, skills, deny-list) | full (standard + engram, context7 y codegraph)")
@@ -151,6 +151,13 @@ func cmdPlan(kind string, args []string) int {
 		return fail("%v", err)
 	}
 	agents := splitList(*agent)
+	explicit := false
+	fs.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "agent" })
+	if !explicit && kind != "install" {
+		if r, ok := install.Load(home); ok && len(r.Agents) > 0 {
+			agents = r.Agents
+		}
+	}
 	if len(agents) == 1 && agents[0] == "auto" {
 		agents = detectedAgents()
 	}
@@ -171,7 +178,7 @@ func cmdPlan(kind string, args []string) int {
 	default:
 		return fail("scope desconocido: %s (global, workspace)", *scope)
 	}
-	o := lifecycle.Options{Home: base, Agents: agents, Force: *force, Hooks: !*noHooks, Permissions: !*noPerms, NoSkills: noSkills, Persona: *persona}
+	o := lifecycle.Options{Home: base, Agents: agents, Force: *force, Hooks: !*noHooks, Permissions: !*noPerms, NoSkills: noSkills, Persona: *persona, Engram: *engram || *all}
 	for _, a := range o.Agents {
 		if _, ok := adapters.Find(a); !ok {
 			return fail("agente no soportado: %s (disponibles: %s, generic)", a, agentNames())
@@ -190,10 +197,25 @@ func cmdPlan(kind string, args []string) int {
 		return fail("--engram, --context7, --codegraph y --all solo se usan con 'install'")
 	}
 	var extraSteps []extras.Step
+	// CodeGraph forma parte del stack estándar; si faltan requisitos se avisa y se sigue.
+	cgraphSet := false
+	fs.Visit(func(f *flag.Flag) { cgraphSet = cgraphSet || f.Name == "codegraph" })
+	var stackSteps []extras.Step
+	if kind == "install" && *preset == "standard" && *scope == "global" && !cgraphSet && !*all {
+		steps, notes, err := extras.PlanFor(home, []string{extras.CodeGraph}, o.Agents)
+		if err != nil {
+			fmt.Println("! aviso: CodeGraph omitido:", err)
+		} else {
+			stackSteps = steps
+			for _, n := range notes {
+				fmt.Println("i", n)
+			}
+		}
+	}
 	if len(wanted) > 0 {
 		sort.Slice(wanted, func(i, j int) bool { return idx(wanted[i]) < idx(wanted[j]) })
 		var notes []string
-		extraSteps, notes, err = extras.Plan(home, wanted)
+		extraSteps, notes, err = extras.PlanFor(home, wanted, o.Agents)
 		if err != nil {
 			if !(extras.IsMissing(err) && *dry) {
 				return fail("%v", err)
@@ -206,15 +228,17 @@ func cmdPlan(kind string, args []string) int {
 			}
 		}()
 	}
-	var p core.Plan
-	switch kind {
-	case "install":
-		p, err = lifecycle.Install(o)
-	case "sync":
-		p, err = lifecycle.Sync(o)
-	default:
-		p, err = lifecycle.Uninstall(o)
+	extraSteps = append(extraSteps, stackSteps...)
+	plan := func() (core.Plan, error) {
+		switch kind {
+		case "install":
+			return lifecycle.Install(o)
+		case "sync":
+			return lifecycle.Sync(o)
+		}
+		return lifecycle.Uninstall(o)
 	}
+	p, err := plan()
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -244,14 +268,36 @@ func cmdPlan(kind string, args []string) int {
 		return fail("falta --yes para aplicar (o usa --dry-run para previsualizar)")
 	}
 	// Los componentes externos van primero: si uno falla no se ha escrito nada de V-IA.
+	// Editan archivos que V-IA no controla, así que antes se respaldan y después se vuelve
+	// a planificar, para no pisar lo que añadan.
+	var before core.Snapshot
 	if len(extraSteps) > 0 {
+		paths := extras.ConfigFiles(home)
+		for _, a := range p.Changes() {
+			paths = append(paths, a.Path)
+		}
+		if before, err = core.Capture(paths); err != nil {
+			return fail("no pude respaldar antes de ejecutar instaladores externos: %v", err)
+		}
 		if err := extras.Run(extraSteps, os.Stdout); err != nil {
-			return fail("%v (no se escribió ningún archivo de V-IA)", err)
+			saved, serr := before.Save(backupRoot(home), time.Now())
+			if serr != nil {
+				return fail("%v; además falló el respaldo: %v", err, serr)
+			}
+			return fail("%v (no se escribió ningún archivo de V-IA; estado anterior en %s, 'v-ia restore latest --yes' lo recupera)", err, saved)
+		}
+		if p, err = plan(); err != nil {
+			return fail("%v", err)
 		}
 	}
 	dir, err := core.Apply(p, backupRoot(home), time.Now())
 	if err != nil {
 		return fail("%v", err)
+	}
+	if before != nil { // queda como backup más reciente: deshace todo, no solo lo de V-IA
+		if dir, err = before.Save(backupRoot(home), time.Now()); err != nil {
+			return fail("%v", err)
+		}
 	}
 	switch {
 	case *scope == "workspace": // el registro de instalación es global: no se toca
@@ -579,7 +625,7 @@ func cmdReview(args []string) int {
 		return fail("%v", err)
 	}
 	if len(args) == 0 {
-		return fail("uso: review check | status | verify | assess | ack | inspect | reset | mode status|enable|disable")
+		return fail("uso: review check | status | verify | assess | ack | refute | inspect | reset | mode status|enable|disable")
 	}
 	switch args[0] {
 	case "check":
@@ -589,10 +635,22 @@ func cmdReview(args []string) int {
 		escItem := cfs.Int("escalate-item", 0, "sube a riesgo ALTO por un ítem cerrado 1-6 (datos, seguridad, contratos, concurrencia, entrega, sin test)")
 		escReason := cfs.String("escalate-reason", "", "razón del escalado (una línea, ≤500 bytes)")
 		baseRef := cfs.String("base-ref", "", "referencia base (por defecto HEAD)")
+		request := cfs.String("request", "", "petición literal del usuario; queda congelada en el recibo")
+		requestFile := cfs.String("request-file", "", "archivo con la petición literal (p. ej. la ficha ODD)")
 		if cfs.Parse(args[1:]) != nil {
 			return 2
 		}
-		r, err := review.Run(root, review.DetectCommands(root), review.RunOptions{Base: *baseRef, Lenses: splitList(*lenses), LensReason: *lreason, EscItem: *escItem, EscReason: *escReason})
+		if *requestFile != "" {
+			if *request != "" {
+				return fail("usa --request o --request-file, no ambos")
+			}
+			b, err := os.ReadFile(*requestFile)
+			if err != nil {
+				return fail("%v", err)
+			}
+			*request = string(b)
+		}
+		r, err := review.Run(root, review.DetectCommands(root), review.RunOptions{Request: *request, Base: *baseRef, Lenses: splitList(*lenses), LensReason: *lreason, EscItem: *escItem, EscReason: *escReason})
 		if err != nil {
 			return fail("%v", err)
 		}
@@ -677,6 +735,34 @@ func cmdReview(args []string) int {
 			fmt.Printf("; faltan lentes: %s", strings.Join(st.Pending, ", "))
 		}
 		fmt.Println()
+		return 0
+	case "refute":
+		rfs := flag.NewFlagSet("refute", flag.ContinueOnError)
+		input := rfs.String("input", "-", "JSON de la refutación (- = stdin)")
+		if rfs.Parse(args[1:]) != nil {
+			return 2
+		}
+		var raw []byte
+		var rerr error
+		if *input == "-" {
+			raw, rerr = io.ReadAll(os.Stdin)
+		} else {
+			raw, rerr = os.ReadFile(*input)
+		}
+		if rerr != nil {
+			return fail("%v", rerr)
+		}
+		var in review.RefuteInput
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&in); err != nil {
+			return fail("refutación inválida: %v", err)
+		}
+		r, err := review.Refute(root, in)
+		if err != nil {
+			return fail("%v", err)
+		}
+		fmt.Printf("✓ refutación admitida: estado %s, %d bloqueante(s) en pie\n", r.State, len(r.Blocking()))
 		return 0
 	case "status":
 		st := review.Status(root)

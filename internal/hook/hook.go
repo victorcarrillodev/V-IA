@@ -56,6 +56,16 @@ type Result struct {
 
 func statePath(root string) string { return filepath.Join(root, ".v-ia", "state.json") }
 
+// ignoreState evita que el estado local acabe en commits. No toca un .gitignore existente
+// ni ignora la configuración (checks.txt, standards.md, review-mode), que se puede versionar.
+func ignoreState(dir string) error {
+	p := filepath.Join(dir, ".gitignore")
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(p, []byte(".gitignore\nstate.json\nguard.json\nreceipt.json\nreminded\n"), 0o644)
+}
+
 func LoadState(root string) State {
 	var s State
 	if b, err := os.ReadFile(statePath(root)); err == nil {
@@ -66,6 +76,9 @@ func LoadState(root string) State {
 
 func SaveState(root string, s State) error {
 	if err := os.MkdirAll(filepath.Dir(statePath(root)), 0o755); err != nil {
+		return err
+	}
+	if err := ignoreState(filepath.Dir(statePath(root))); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(s)
