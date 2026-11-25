@@ -191,6 +191,11 @@ func Run(root string, cmds []string, o RunOptions) (Receipt, error) {
 		}
 		r.BlockedTrees = blockedTrees
 	}
+	// open: revisión sin cerrar (o el mismo candidato otra vez). Lo elegido en ella no se puede perder.
+	open := prevErr == nil && (prev.State != StateReady && prev.State != StateApproved || cerr == nil && prev.CandidateID == cand.ID)
+	if open && prev.Risk.Escalation != nil && o.EscItem == 0 && o.EscReason == "" {
+		o.EscItem, o.EscReason = prev.Risk.Escalation.Item, prev.Risk.Escalation.Reason
+	}
 	for _, c := range cmds {
 		ctx, cancel := context.WithTimeout(context.Background(), o.Timeout)
 		cmd := shellCommand(ctx, c)
@@ -233,9 +238,43 @@ func Run(root string, cmds []string, o RunOptions) (Receipt, error) {
 		return r, err
 	}
 	r.SelectedLenses, r.LensReason = lenses, o.LensReason
+	if open && len(prev.SelectedLenses) > 0 {
+		if err := keepLenses(&r, prev, len(o.Lenses) > 0); err != nil {
+			return r, err
+		}
+	}
 	r.Created = time.Now().UTC().Format(time.RFC3339)
 	r.State = initialState(r)
 	return r, save(root, r)
+}
+
+// keepLenses aplica a r las lentes de la revisión abierta: se pueden añadir, nunca quitar. Una
+// selección explícita se mantiene salvo que el riesgo suba; la revisión debida tampoco desaparece.
+func keepLenses(r *Receipt, prev Receipt, explicit bool) error {
+	if explicit {
+		for _, l := range prev.SelectedLenses {
+			if !slices.Contains(r.SelectedLenses, l) {
+				return fmt.Errorf("no se puede quitar la lente %q de una revisión abierta: para empezar otra ejecuta 'v-ia review reset'", l)
+			}
+		}
+	} else {
+		rank := map[string]int{TierPassive: 0, TierMedium: 1, TierHigh: 2, TierUnknown: 2}
+		add := r.SelectedLenses
+		if prev.LensReason != "" && rank[r.Risk.Tier] <= rank[prev.Risk.Tier] {
+			add = nil
+		}
+		var out []string
+		for _, l := range AllLenses {
+			if slices.Contains(prev.SelectedLenses, l) || slices.Contains(add, l) {
+				out = append(out, l)
+			}
+		}
+		r.SelectedLenses, r.LensReason = out, prev.LensReason
+	}
+	if prev.Risk.ReviewDue && !r.Risk.ReviewDue {
+		r.Risk.ReviewDue, r.Risk.ReviewDueReason = true, prev.Risk.ReviewDueReason
+	}
+	return nil
 }
 
 func initialState(r Receipt) string {

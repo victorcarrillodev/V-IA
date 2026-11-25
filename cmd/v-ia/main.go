@@ -630,7 +630,7 @@ func cmdReview(args []string) int {
 	switch args[0] {
 	case "check":
 		cfs := flag.NewFlagSet("check", flag.ContinueOnError)
-		lenses := cfs.String("lenses", "", "lentes a revisar (risk,resilience,readability,reliability); solo en medium/high")
+		lenses := cfs.String("lenses", "", "lentes a revisar (risk,resilience,readability,reliability); solo en medium/high; con la revisión abierta se pueden añadir, no quitar")
 		lreason := cfs.String("lenses-reason", "", "razón de la selección de lentes (obligatoria con --lenses)")
 		escItem := cfs.Int("escalate-item", 0, "sube a riesgo ALTO por un ítem cerrado 1-6 (datos, seguridad, contratos, concurrencia, entrega, sin test)")
 		escReason := cfs.String("escalate-reason", "", "razón del escalado (una línea, ≤500 bytes)")

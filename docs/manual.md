@@ -692,7 +692,7 @@ Cada `core/skills/<nombre>/SKILL.md` debe llevar frontmatter completo (`name` ig
 
 ## Reglas del recibo
 
-Cada lente admite un solo veredicto por candidato. Tras un bloqueante hay que cambiar el código, y una corrección que falla las pruebas no devuelve el presupuesto. El recibo recuerda su `--base`.
+Cada lente admite un solo veredicto por candidato. Tras un bloqueante hay que cambiar el código, y una corrección que falla las pruebas no devuelve el presupuesto. El recibo recuerda su `--base`. Mientras la revisión siga abierta (o se repita el mismo candidato), `review check` conserva las lentes elegidas y el escalado de riesgo: se pueden añadir lentes, no quitarlas; `review reset` empieza de cero.
 
 ## Delegación
 
