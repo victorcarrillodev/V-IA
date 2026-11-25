@@ -3,6 +3,7 @@ package adapters
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -10,6 +11,7 @@ import (
 func TestPathsPerAgent(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("APPDATA", "")
 	h := "/home/u"
 	want := map[string]string{
 		"claude-code": "/home/u/.claude/CLAUDE.md",
@@ -24,7 +26,15 @@ func TestPathsPerAgent(t *testing.T) {
 	for _, n := range []string{"cursor", "kiro-ide", "vscode-copilot", "antigravity"} {
 		want[n] = "" // cargan un archivo propio con frontmatter (OwnFile), no un bloque
 	}
-	want["trae-ide"] = "/home/u/.config/Trae/User/user_rules.md"
+	// Trae es una app de escritorio: su carpeta de usuario depende del sistema.
+	switch runtime.GOOS {
+	case "darwin":
+		want["trae-ide"] = "/home/u/Library/Application Support/Trae/User/user_rules.md"
+	case "windows":
+		want["trae-ide"] = "/home/u/AppData/Roaming/Trae/User/user_rules.md"
+	default:
+		want["trae-ide"] = "/home/u/.config/Trae/User/user_rules.md"
+	}
 	want["hermes"] = "/home/u/.hermes/SOUL.md"
 	want["kimi"] = "/home/u/.kimi-code/AGENTS.md"
 	want["pi"] = "/home/u/.pi/agent/APPEND_SYSTEM.md"
@@ -37,7 +47,7 @@ func TestPathsPerAgent(t *testing.T) {
 			}
 			continue
 		}
-		if !ok || a.Targets(h)[0] != p {
+		if !ok || a.Targets(h)[0] != filepath.FromSlash(p) {
 			t.Errorf("%s: %v quería %s", n, a.Targets(h), p)
 		}
 	}
@@ -51,7 +61,7 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/cx")
 	oc, _ := Find("opencode")
 	cx, _ := Find("codex")
-	if oc.Targets("/h")[0] != filepath.Join("/xdg", "opencode", "AGENTS.md") || cx.Targets("/h")[0] != "/cx/AGENTS.md" {
+	if oc.Targets("/h")[0] != filepath.Join("/xdg", "opencode", "AGENTS.md") || cx.Targets("/h")[0] != filepath.Join("/cx", "AGENTS.md") {
 		t.Fatal("XDG_CONFIG_HOME / CODEX_HOME ignorados")
 	}
 }

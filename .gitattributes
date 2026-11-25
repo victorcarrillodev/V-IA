@@ -1,0 +1,2 @@
+# gofmt exige LF; sin esto el checkout en Windows (autocrlf) convierte a CRLF.
+* text=auto eol=lf
