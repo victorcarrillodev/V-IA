@@ -157,6 +157,11 @@ func Run(root string, cmds []string, o RunOptions) (Receipt, error) {
 	if o.Timeout == 0 {
 		o.Timeout = 10 * time.Minute
 	}
+	unlock, err := lock(root)
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer unlock()
 	prev, prevErr := load(root)
 	if prevErr == nil && prev.State == StateEscalated {
 		return Receipt{}, errors.New("la revisión anterior quedó ESCALADA (la única corrección no bastó): decide cómo seguir y ejecuta 'v-ia review reset'")
@@ -315,6 +320,11 @@ func Load(root string) (Receipt, error) { return load(root) }
 
 // Reset descarta un recibo (típicamente escalado) para empezar un linaje nuevo: decisión humana.
 func Reset(root string) error {
+	unlock, err := lock(root)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := os.Remove(receiptPath(root)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -385,6 +395,11 @@ func firstN(s []string, n int) []string {
 // RecordReview admite la revisión de una lente. El veredicto lo calcula V-IA: "changes" si hay
 // algún severo causado por el cambio con prueba; si no, "approve". Devuelve el recibo actualizado.
 func RecordReview(root string, in ReviewInput) (Receipt, error) {
+	unlock, err := lock(root)
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer unlock()
 	r, err := load(root)
 	if err != nil {
 		return r, err

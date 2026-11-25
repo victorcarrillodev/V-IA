@@ -89,6 +89,11 @@ func TestKeepLensesWhenRiskChanges(t *testing.T) {
 		t.Fatalf("si el riesgo sube se añaden las lentes por defecto: %v %v", up.SelectedLenses, err)
 	}
 
+	unk := Receipt{SelectedLenses: DefaultLenses(TierUnknown), Risk: unknown("sin candidato")}
+	if err := keepLenses(&unk, prev, false); err != nil || !reflect.DeepEqual(unk.SelectedLenses, AllLenses) {
+		t.Fatalf("un riesgo desconocido cuenta como subida: %v %v", unk.SelectedLenses, err)
+	}
+
 	down := Receipt{Risk: Assessment{Tier: TierPassive}}
 	if err := keepLenses(&down, prev, false); err != nil || !down.Risk.ReviewDue || down.Risk.ReviewDueReason != "high_risk" || initialState(Receipt{Result: "pass", Risk: down.Risk, SelectedLenses: down.SelectedLenses}) != StateChecking {
 		t.Fatalf("la revisión debida no desaparece al bajar el riesgo: %+v %v", down, err)

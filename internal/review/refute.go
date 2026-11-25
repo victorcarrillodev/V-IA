@@ -65,6 +65,11 @@ func (r Receipt) Blocking() []Blocking {
 // Refute admite la única refutación de un candidato bloqueado. Debe responder a todos los
 // bloqueantes y venir de alguien distinto de quien los reportó.
 func Refute(root string, in RefuteInput) (Receipt, error) {
+	unlock, err := lock(root)
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer unlock()
 	r, err := load(root)
 	if err != nil {
 		return r, err

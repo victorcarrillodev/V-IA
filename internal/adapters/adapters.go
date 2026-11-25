@@ -198,8 +198,6 @@ func (a Adapter) Detected() bool {
 	return false
 }
 
-// userAppDir es la carpeta de usuario de una aplicación de escritorio (VS Code, Trae…): ~/.config/<App>/User
-// en Linux (respeta XDG_CONFIG_HOME), ~/Library/Application Support/<App>/User en macOS y %APPDATA%\<App>\User en Windows.
 func isDir(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }
 
 // kimiLegacy: la raíz actual (kimi-code v0.11+) es ~/.kimi-code; solo si no existe y sí existe
@@ -226,6 +224,8 @@ func piAgentDir(home string) string {
 	return filepath.Join(home, ".pi", "agent")
 }
 
+// userAppDir es la carpeta de usuario de una aplicación de escritorio (VS Code, Trae…): ~/.config/<App>/User
+// en Linux (respeta XDG_CONFIG_HOME), ~/Library/Application Support/<App>/User en macOS y %APPDATA%\<App>\User en Windows.
 func userAppDir(home, app string) string {
 	switch runtime.GOOS {
 	case "darwin":

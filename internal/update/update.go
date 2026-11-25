@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -234,6 +235,25 @@ func extract(tgz, dir string) (string, error) {
 	}
 }
 
+// swap pone tmp en el lugar de self. Windows no deja sobrescribir un ejecutable en marcha, pero sí
+// renombrarlo: se aparta como .old (se borra en la siguiente actualización) y, si algo falla, vuelve.
+func swap(tmp, self string) error {
+	if runtime.GOOS != "windows" {
+		return os.Rename(tmp, self)
+	}
+	old := self + ".old"
+	os.Remove(old)
+	if err := os.Rename(self, old); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, self); err != nil {
+		os.Rename(old, self)
+		return err
+	}
+	os.Remove(old) // falla si sigue en ejecución
+	return nil
+}
+
 // Replace sustituye self por newBin de forma atómica (misma carpeta + rename).
 func Replace(self, newBin string) error {
 	if real, err := filepath.EvalSymlinks(self); err == nil {
@@ -263,7 +283,7 @@ func Replace(self, newBin string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, self); err != nil {
+	if err := swap(tmp, self); err != nil {
 		os.Remove(tmp)
 		return err
 	}
