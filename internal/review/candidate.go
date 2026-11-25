@@ -79,7 +79,12 @@ func TakeCandidate(root, base string) (Candidate, error) {
 			return Candidate{}, err
 		}
 	}
-	if _, err := gitEnv(root, env, "add", "-A", "--", ".", ":(exclude).v-ia", ":(exclude).atl", ":(exclude).serena"); err != nil {
+	// El estado local queda fuera sin pathspecs ":(exclude)": git sale con error si nombran una carpeta
+	// ignorada. Se añade todo y esas carpetas vuelven a su versión de la base en el índice temporal.
+	if _, err := gitEnv(root, env, "add", "-A", "--", "."); err != nil {
+		return Candidate{}, err
+	}
+	if _, err := gitEnv(root, env, "reset", "-q", bt, "--", ".v-ia", ".atl", ".serena"); err != nil {
 		return Candidate{}, err
 	}
 	ct, err := gitEnv(root, env, "write-tree")
