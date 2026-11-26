@@ -294,6 +294,8 @@ func initialState(r Receipt) string {
 	return StateReady
 }
 
+var rename = os.Rename // sustituible en pruebas
+
 func save(root string, r Receipt) error {
 	b, _ := json.MarshalIndent(r, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(receiptPath(root)), 0o755); err != nil {
@@ -303,7 +305,15 @@ func save(root string, r Receipt) error {
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, receiptPath(root)) // atómico: nadie lee un recibo a medias
+	// atómico: nadie lee un recibo a medias. En Windows falla mientras otro proceso lo está leyendo,
+	// así que se reintenta durante unos segundos.
+	for i := 0; ; i++ {
+		err := rename(tmp, receiptPath(root))
+		if err == nil || i == 40 {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func load(root string) (Receipt, error) {

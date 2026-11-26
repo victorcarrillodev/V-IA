@@ -23,6 +23,7 @@ En total hay 17 agentes más `generic`; fuera de Claude Code y OpenCode no está
 - Revisión RDD completa con cuatro agentes independientes: `approved`. La orquestó una sesión de Claude Code a mano.
 - Fichas antiguas con línea `Risk`.
 - CI de Windows obligatoria; bloqueo del recibo y reemplazo del binario en ejecución probados en Windows (CI en verde en `9d962a1`), con las cuatro lentes aprobadas.
+- Avisos de la revisión corregidos (en local): error de `update` en Windows que dice dónde quedó el binario, reintento al guardar el recibo, fallo inmediato sin soporte de bloqueo y pruebas del bloqueo de `check` y `refute`.
 
 ## Falta
 
@@ -36,10 +37,6 @@ En total hay 17 agentes más `generic`; fuera de Claude Code y OpenCode no está
 
 ## Riesgos conocidos
 
-- Windows: si `update` no logra poner el binario nuevo ni restaurar el anterior, queda solo `v-ia.exe.old` y el error no lo dice.
-- Windows: un `review status` o `verify` simultáneo podría hacer fallar el guardado del recibo (los lectores no toman el bloqueo; sin reproducir).
-- Sin soporte de bloqueo en el sistema de archivos, cada operación de revisión espera 2 minutos y culpa a "otra operación en curso".
-- Sin prueba: el bloqueo de `check` y el de `refute`, ni la vuelta atrás de `update` en Windows.
 - El refutador se distingue por el nombre declarado, no por identidad.
 - Si `.v-ia/`, `.atl/` o `.serena/` no están ignoradas, su contenido se guarda como objetos git sueltos al congelar el candidato.
 - Un `review check` largo hace esperar a `ack`, `refute` y `reset`; pasados 2 minutos fallan y hay que reintentar.

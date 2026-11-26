@@ -235,26 +235,30 @@ func extract(tgz, dir string) (string, error) {
 	}
 }
 
+var rename = os.Rename // sustituible en pruebas
+
 // swap pone tmp en el lugar de self. Windows no deja sobrescribir un ejecutable en marcha, pero sí
 // renombrarlo: se aparta como .old (se borra en la siguiente actualización) y, si algo falla, vuelve.
-func swap(tmp, self string) error {
-	if runtime.GOOS != "windows" {
-		return os.Rename(tmp, self)
+func swap(goos, tmp, self string) error {
+	if goos != "windows" {
+		return rename(tmp, self)
 	}
 	old := self + ".old"
 	os.Remove(old)
-	if err := os.Rename(self, old); err != nil {
+	if err := rename(self, old); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, self); err != nil {
-		os.Rename(old, self)
+	if err := rename(tmp, self); err != nil {
+		if rerr := rename(old, self); rerr != nil {
+			return fmt.Errorf("%w; tampoco pude restaurar el binario anterior (%v): está en %s, renómbralo a %s", err, rerr, old, self)
+		}
 		return err
 	}
 	os.Remove(old) // falla si sigue en ejecución
 	return nil
 }
 
-// Replace sustituye self por newBin de forma atómica (misma carpeta + rename).
+// Replace sustituye self por newBin con un rename desde la misma carpeta (atómico en Unix; en Windows son dos pasos, ver swap).
 func Replace(self, newBin string) error {
 	if real, err := filepath.EvalSymlinks(self); err == nil {
 		self = real
@@ -283,7 +287,7 @@ func Replace(self, newBin string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := swap(tmp, self); err != nil {
+	if err := swap(runtime.GOOS, tmp, self); err != nil {
 		os.Remove(tmp)
 		return err
 	}
