@@ -23,7 +23,7 @@ En total hay 17 agentes más `generic`; fuera de Claude Code y OpenCode no está
 - Revisión RDD completa con cuatro agentes independientes: `approved`. La orquestó una sesión de Claude Code a mano.
 - Fichas antiguas con línea `Risk`.
 - CI de Windows obligatoria; bloqueo del recibo y reemplazo del binario en ejecución probados en Windows (CI en verde en `9d962a1`), con las cuatro lentes aprobadas.
-- Avisos de la revisión corregidos (en local): error de `update` en Windows que dice dónde quedó el binario, reintento al guardar el recibo, fallo inmediato sin soporte de bloqueo y pruebas del bloqueo de `check` y `refute`.
+- Avisos de la revisión corregidos (CI en verde en `a3a034c`, cuatro lentes aprobadas): error de `update` en Windows que dice dónde quedó el binario, reintento al guardar el recibo, fallo inmediato sin soporte de bloqueo y pruebas del bloqueo de `check` y `refute`.
 
 ## Falta
 
