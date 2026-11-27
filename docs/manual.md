@@ -489,9 +489,9 @@ Convive con RDD sin solaparse: RDD emite el recibo de entrega; `standards` revis
 
 ## Seguridad
 
-**Deny-list** que se siembra en `permissions.deny` de `settings.json` (solo si esa clave no existe; una lista vacía tuya se respeta):
+**Deny-list** que se siembra en `permissions.deny` de `settings.json` (solo si esa clave no existe; una lista vacía o modificada por ti se respeta, y la lista antigua de solo lectura sin cambios se completa al reinstalar o sincronizar):
 
-`Read(~/.ssh/**)`, `Read(**/.env)`, `Read(**/.env.*)`, `Read(**/*.pem)`, `Read(**/*.key)`, `Read(**/*.p12)`, `Read(**/*.pfx)`, `Read(~/.aws/credentials)`, `Read(~/.config/gh/hosts.yml)`, `Read(**/secrets/**)`, `Read(~/.credentials/**)`.
+Cada una de estas rutas se niega con `Read(…)` y con `Edit(…)` (que también cubre `Write`): `~/.ssh/**`, `**/.env`, `**/.env.*`, `**/*.pem`, `**/*.key`, `**/*.p12`, `**/*.pfx`, `~/.aws/credentials`, `~/.config/gh/hosts.yml`, `**/secrets/**`, `~/.credentials/**`. `**/.env.*` incluye archivos como `.env.example`.
 
 **Comandos bloqueados siempre** por el hook: ver tabla de `PreToolUse`.
 

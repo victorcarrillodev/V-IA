@@ -90,21 +90,54 @@ func render(m map[string]any) (string, error) {
 	return string(b) + "\n", err
 }
 
-// DenyList son las rutas sensibles que se niegan a la lectura por defecto.
-var DenyList = []string{
-	"Read(~/.ssh/**)", "Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)",
-	"Read(**/*.p12)", "Read(**/*.pfx)", "Read(~/.aws/credentials)", "Read(~/.config/gh/hosts.yml)",
-	"Read(**/secrets/**)", "Read(~/.credentials/**)",
+// sensitive son las rutas que se niegan por defecto, tanto para leer como para editar.
+var sensitive = []string{
+	"~/.ssh/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key",
+	"**/*.p12", "**/*.pfx", "~/.aws/credentials", "~/.config/gh/hosts.yml",
+	"**/secrets/**", "~/.credentials/**",
 }
 
-// seedDeny crea permissions.deny solo si la clave no existe: lo que el usuario ya
-// decidió (incluida una lista vacía) no se toca.
+func rules(tool string) []string {
+	out := make([]string, len(sensitive))
+	for i, p := range sensitive {
+		out[i] = tool + "(" + p + ")"
+	}
+	return out
+}
+
+// DenyList es la deny-list por defecto. Las reglas Edit cubren también Write.
+var DenyList = append(rules("Read"), rules("Edit")...)
+
+// isOldDefault dice si la lista es exactamente la que sembraban las versiones anteriores (solo
+// lectura), sin cambios del usuario.
+func isOldDefault(v any) bool {
+	list, _ := v.([]any)
+	have := map[any]bool{}
+	for _, x := range list {
+		if s, ok := x.(string); ok {
+			have[s] = true
+		}
+	}
+	old := rules("Read")
+	if len(list) != len(old) {
+		return false
+	}
+	for _, r := range old {
+		if !have[r] {
+			return false
+		}
+	}
+	return true
+}
+
+// seedDeny crea permissions.deny si la clave no existe, o completa la lista antigua sin modificar:
+// lo que el usuario ya decidió (incluida una lista vacía) no se toca.
 func seedDeny(m map[string]any) {
 	perms, _ := m["permissions"].(map[string]any)
 	if perms == nil {
 		perms = map[string]any{}
 	}
-	if _, ok := perms["deny"]; ok {
+	if v, ok := perms["deny"]; ok && !isOldDefault(v) {
 		return
 	}
 	l := make([]any, len(DenyList))

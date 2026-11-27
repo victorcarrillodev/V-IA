@@ -13,7 +13,7 @@ V-IA trata al **agente de IA como un actor con buena intención pero poco fiable
 | Comandos destructivos | Lista de patrones (`rm -rf /`, `push --force`, `reset --hard`…) | Heurística: cubre las formas comunes, no toda variante |
 | Cerrar sin evidencia | `task check`, `task verify`, hook `Stop` (solo Claude Code) | Forma + contraste con el recibo; no prueba que el resultado sea correcto |
 | Entregar sin revisar | Recibo ligado al hash del árbol + visto bueno del revisor si el riesgo es alto | Un solo byte distinto invalida el recibo |
-| Leer secretos | Deny-list en `settings.json` (`~/.ssh`, `.env`, credenciales) | Solo Claude Code |
+| Leer o editar secretos | Deny-list en `settings.json` (`~/.ssh`, `.env`, credenciales) | Solo Claude Code |
 
 ## Límites que no se pueden cerrar con hooks
 
